@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Secrets and local configurations
+.env
+config.json
+
+# Large files exceeding GitHub's 100MB limit
+*.zip
+*.psd
+DeepSeek-chan*/
+
+# Python artifacts
+__pycache__/
+*.pyc
+
+# Test audio outputs
+*.mp3
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

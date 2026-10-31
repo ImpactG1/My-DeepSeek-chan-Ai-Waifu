@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DeepSeek-chan Desktop Companion</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Protect browser globals from Electron nodeIntegration -->
+  <script>
+    if (typeof module === 'object') {
+      window.tempModule = module;
+      window.tempExports = typeof exports !== 'undefined' ? exports : undefined;
+      module = undefined;
+      exports = undefined;
+    }
+  </script>
+  <!-- Live2D Cubism Core & PixiJS Libraries -->
+  <script src="lib/live2dcubismcore.min.js"></script>
+  <script src="lib/pixi.min.js"></script>
+  <script src="lib/cubism4.min.js"></script>
+  <script>
+    if (window.tempModule) {
+      module = window.tempModule;
+    }
+    if (window.tempExports) {
+      exports = window.tempExports;
+    }
+  </script>
+</head>
+<body>
+  <div id="app-container">
+    <!-- Top Drag Bar & Window Controls -->
+    <div id="drag-bar">
+      <div class="drag-handle" title="Drag to move DeepSeek-chan">
+        <span class="status-dot online"></span>
+        <span class="app-title">DeepSeek-chan</span>
+      </div>
+      <div class="win-buttons">
+        <button id="btn-pin" title="Toggle Always on Top" class="win-btn active">📌</button>
+        <button id="btn-settings" title="Settings" class="win-btn">⚙️</button>
+        <button id="btn-min" title="Minimize" class="win-btn">─</button>
+        <button id="btn-close" title="Close" class="win-btn">✕</button>
+      </div>
+    </div>
+
+    <!-- Speech Dialogue Bubble -->
+    <div id="dialogue-box" class="hidden">
+      <div class="bubble-header">
+        <span class="speaker-name">DeepSeek-chan</span>
+        <div id="audio-wave" class="audio-wave hidden">
+          <span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+      <div id="dialogue-text" class="bubble-content"></div>
+    </div>
+
+    <!-- Live2D Canvas Layer -->
+    <canvas id="live2d-canvas"></canvas>
+
+    <!-- Bottom Dock / Chat Control Bar -->
+    <div id="chat-dock">
+      <div class="dock-toggle-btn" id="btn-toggle-dock" title="Toggle Chat Controls">
+        <span id="dock-chevron">▼</span>
+      </div>
+
+      <div id="dock-inner">
+        <!-- Quick Expression Pills -->
+        <div class="expression-bar">
+          <button class="exp-btn" data-exp="blush" title="Blush">😊 Blush</button>
+          <button class="exp-btn" data-exp="heart_eyes" title="Heart Eyes">😍 Hearts</button>
+          <button class="exp-btn" data-exp="smug" title="Smug">😏 Smug</button>
+          <button class="exp-btn" data-exp="crying" title="Crying">😭 Tears</button>
+          <button class="exp-btn" data-exp="cold_sweat" title="Sweat">💧 Sweat</button>
+          <button class="exp-btn" data-exp="glasses" title="Glasses">👓 Smart</button>
+          <button class="exp-btn" data-exp="reset" title="Reset Face">✨ Reset</button>
+        </div>
+
+        <!-- Chat Input Form -->
+        <div class="input-row">
+          <button id="btn-mic" class="mic-btn" title="Click or Hold to Speak">
+            <span class="mic-icon">🎤</span>
+            <span class="mic-ripple"></span>
+          </button>
+          <input 
+            type="text" 
+            id="chat-input" 
+            placeholder="Talk with DeepSeek-chan... (Enter to send)" 
+            autocomplete="off"
+          />
+          <button id="btn-send" class="send-btn" title="Send message">➤</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>⚙️ Settings</h3>
+          <button id="btn-close-settings" class="close-card-btn">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="cfg-groq-key">Groq API Key:</label>
+            <input type="password" id="cfg-groq-key" placeholder="gsk_..." />
+            <small>Needed for Chat LLM & Whisper STT. Stored locally.</small>
+          </div>
+
+          <div class="form-group">
+            <label for="cfg-groq-model">LLM Model:</label>
+            <select id="cfg-groq-model">
+              <option value="qwen/qwen3.8-27b" selected>Qwen 3.8 27B (Recommended - Expressive Roleplay)</option>
+              <option value="openai/gpt-oss-20b">OpenAI GPT-OSS 20B (Ultra Fast)</option>
+              <option value="openai/gpt-oss-120b">OpenAI GPT-OSS 120B (High Capability)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="cfg-voice">TTS Voice (Edge-TTS):</label>
+            <select id="cfg-voice">
+              <option value="ja-JP-NanamiNeural">Nanami (Cute Japanese Accent - Recommended)</option>
+              <option value="en-US-AnaNeural">Ana (Sweet English)</option>
+              <option value="en-US-AvaNeural">Ava (Playful English)</option>
+            </select>
+          </div>
+
+          <div class="form-group-row">
+            <div class="form-group half">
+              <label for="cfg-pitch">Voice Pitch:</label>
+              <input type="range" id="cfg-pitch" min="-10" max="15" value="4" />
+              <span id="pitch-val">+4Hz</span>
+            </div>
+            <div class="form-group half">
+              <label for="cfg-rate">Speech Rate:</label>
+              <input type="range" id="cfg-rate" min="-20" max="30" value="0" />
+              <span id="rate-val">+0%</span>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button id="btn-save-settings" class="btn-primary">Save & Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

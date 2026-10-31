@@ -1,0 +1,127 @@
+{
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "model.moc3",
+    "Textures": [
+      "textures/texture_00.png",
+      "textures/texture_01.png",
+      "textures/texture_02.png",
+      "textures/texture_03.png",
+      "textures/texture_04.png"
+    ],
+    "Physics": "model.physics3.json",
+    "DisplayInfo": "model.cdi3.json",
+    "Expressions": [
+      {
+        "Name": "blush",
+        "File": "expressions/blush.exp3.json"
+      },
+      {
+        "Name": "heart_eyes",
+        "File": "expressions/heart_eyes.exp3.json"
+      },
+      {
+        "Name": "crying",
+        "File": "expressions/crying.exp3.json"
+      },
+      {
+        "Name": "cold_sweat",
+        "File": "expressions/cold_sweat.exp3.json"
+      },
+      {
+        "Name": "smug",
+        "File": "expressions/smug.exp3.json"
+      },
+      {
+        "Name": "dizzy",
+        "File": "expressions/dizzy.exp3.json"
+      },
+      {
+        "Name": "cute_teeth",
+        "File": "expressions/cute_teeth.exp3.json"
+      },
+      {
+        "Name": "lean_forward",
+        "File": "expressions/lean_forward.exp3.json"
+      },
+      {
+        "Name": "glasses",
+        "File": "expressions/glasses.exp3.json"
+      },
+      {
+        "Name": "monocle",
+        "File": "expressions/monocle.exp3.json"
+      },
+      {
+        "Name": "gloomy",
+        "File": "expressions/gloomy.exp3.json"
+      },
+      {
+        "Name": "bonk",
+        "File": "expressions/bonk.exp3.json"
+      },
+      {
+        "Name": "loading",
+        "File": "expressions/loading.exp3.json"
+      },
+      {
+        "Name": "squint",
+        "File": "expressions/squint.exp3.json"
+      }
+    ],
+    "Motions": {
+      "Idle": [
+        {
+          "File": "motions/idle.motion3.json"
+        }
+      ],
+      "Wave": [
+        {
+          "File": "motions/wave.motion3.json"
+        }
+      ],
+      "LowerHand": [
+        {
+          "File": "motions/lower_hand.motion3.json"
+        }
+      ],
+      "Point": [
+        {
+          "File": "motions/point.motion3.json"
+        }
+      ],
+      "LowerFinger": [
+        {
+          "File": "motions/lower_finger.motion3.json"
+        }
+      ],
+      "HoldGrass": [
+        {
+          "File": "motions/hold_grass.motion3.json"
+        }
+      ],
+      "PutGrass": [
+        {
+          "File": "motions/put_grass.motion3.json"
+        }
+      ]
+    }
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": [
+        "ParamEyeROpen",
+        "ParamEyeLOpen"
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": [
+        "ParamMouthOpenY"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "groq_api_key": "",
+  "groq_model": "qwen/qwen3.8-27b",
+  "tts_voice": "ja-JP-NanamiNeural",
+  "tts_pitch": "+4Hz",
+  "tts_rate": "+0%"
+}

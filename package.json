@@ -1,0 +1,21 @@
+{
+  "name": "deepseek-chan-waifu",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "cmd /c \"set ELECTRON_RUN_AS_NODE=&& electron .\"",
+    "server": "python server/server.py"
+  },
+  "keywords": [
+    "ai-waifu",
+    "live2d",
+    "groq",
+    "desktop-companion"
+  ],
+  "author": "",
+  "license": "ISC",
+  "description": "Interactive Live2D AI Waifu Desktop Companion",
+  "devDependencies": {
+    "electron": "^41.7.1"
+  }
+}
