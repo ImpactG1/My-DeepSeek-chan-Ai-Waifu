@@ -111,10 +111,52 @@ body, html {
   height: 100%;
   z-index: 10;
   cursor: grab;
+  filter: drop-shadow(0 14px 28px rgba(0, 0, 0, 0.45)) drop-shadow(0 0 16px rgba(14, 165, 233, 0.22));
+  transform-style: preserve-3d;
+  transition: filter 0.3s ease;
 }
 
 #live2d-canvas:active {
   cursor: grabbing;
+}
+
+/* ================= Dynamic Touch Particles ================= */
+#particle-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 120;
+  overflow: hidden;
+}
+
+.touch-particle {
+  position: absolute;
+  pointer-events: none;
+  user-select: none;
+  font-size: 26px;
+  animation: floatUpParticle 1.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4));
+}
+
+@keyframes floatUpParticle {
+  0% {
+    transform: translate(-50%, -50%) scale(0.3) rotate(0deg);
+    opacity: 0;
+  }
+  25% {
+    transform: translate(-50%, -75%) scale(1.25) rotate(-12deg);
+    opacity: 1;
+  }
+  75% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx, 0px)), -170%) scale(0.85) rotate(18deg);
+    opacity: 0;
+  }
 }
 
 /* ================= Speech Dialogue Bubble ================= */
