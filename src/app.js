@@ -1,25 +1,14 @@
-/**
- * DeepSeek-chan Desktop Companion
- * Dual Engine: 3D VRM VTuber Engine (Full Humanoid Skeletal Bones) & 2D Live2D Engine
- * Features:
- * - True Bipedal Skeletal Locomotion: Alternating leg strides with knee bending, ankle flex, and arm opposition
- * - Procedural Life States: IDLE, WALK, RUN, HOP, SIT, SLEEP
- * - 3D Gaze Tracking: Eyes and head smoothly follow the mouse cursor across desktop
- * - Real-Time 3D Lip-Sync: Edge-TTS audio stream drives mouth blend shapes (aa, oh)
- * - SpringBone Physics: Dynamic hair, ribbon, and skirt inertia and wind
- * - 3D Raycasting & Smart Click-Through: Seamless desktop pass-through with interactive touch
- * - Groq LLM (qwen/qwen3.8-27b) + Whisper STT + Edge-TTS (Nanami Japanese Accent)
- */
+// ==========================================
+// DeepSeek-chan AI Waifu Desktop Companion
+// Desktop Roaming Pet Engine & 3D Life System
+// ==========================================
 
 const { ipcRenderer } = require('electron');
 
-// ==========================================
-// Global Constants & State
-// ==========================================
-const API_BASE = 'http://127.0.0.1:8000';
-const VRM_MODEL_PATH = '../assets/vrm/avatar.vrm';
-const LIVE2D_MODEL_PATH = '../assets/live2d/deepseek/model.model3.json';
+const BACKEND_URL = 'http://127.0.0.1:8000';
+const MODEL_PATH = '../assets/live2d/deepseek/model.model3.json';
 
+// States
 const PET_STATES = {
   IDLE: 'IDLE',
   WALK: 'WALK',
@@ -29,701 +18,524 @@ const PET_STATES = {
   SLEEP: 'SLEEP'
 };
 
-let currentEngineMode = '3d'; // '3d' or '2d'
-let vrmLifeEngine = null;
-let live2dLifeEngine = null;
-let threeScene = null;
-let threeCamera = null;
-let threeRenderer = null;
-let currentVrm = null;
-let pixiApp = null;
+// Global App State
 let live2dModel = null;
-let isAudioPlaying = false;
-let audioAnalyser = null;
+let pixiApp = null;
+let lifeEngine = null;
 let audioContext = null;
-let isRoamingEnabled = true;
+let currentAudio = null;
+let isSpeaking = false;
+let isRecording = false;
+let mediaRecorder = null;
+let audioChunks = [];
+let conversationHistory = [];
+let roamEnabled = true;
 
-// DOM Elements
-const canvas = document.getElementById('waifu-canvas') || document.getElementById('live2d-canvas');
+// Configuration
+let config = {
+  groqKey: '',
+  groqModel: 'qwen/qwen3.8-27b',
+  voice: 'ja-JP-NanamiNeural',
+  pitch: '+4Hz',
+  rate: '+0%',
+  isPinned: true
+};
+
+// UI Elements
+const canvas = document.getElementById('live2d-canvas');
 const dialogueBox = document.getElementById('dialogue-box');
 const dialogueText = document.getElementById('dialogue-text');
 const audioWave = document.getElementById('audio-wave');
-const chatDock = document.getElementById('chat-dock');
-const dockInner = document.getElementById('dock-inner');
-const btnToggleDock = document.getElementById('btn-toggle-dock');
-const dockChevron = document.getElementById('dock-chevron');
 const chatInput = document.getElementById('chat-input');
 const btnSend = document.getElementById('btn-send');
 const btnMic = document.getElementById('btn-mic');
-const btnRoam = document.getElementById('btn-roam');
-const btnMode = document.getElementById('btn-mode');
-const btnPin = document.getElementById('btn-pin');
-const btnSettings = document.getElementById('btn-settings');
-const btnCloseSettings = document.getElementById('btn-close-settings');
-const btnSaveSettings = document.getElementById('btn-save-settings');
-const btnMin = document.getElementById('btn-min');
-const btnClose = document.getElementById('btn-close');
+const chatDock = document.getElementById('chat-dock');
+const btnToggleDock = document.getElementById('btn-toggle-dock');
+const dockChevron = document.getElementById('dock-chevron');
 const settingsModal = document.getElementById('settings-modal');
-const cfgGroqKey = document.getElementById('cfg-groq-key');
-const cfgGroqModel = document.getElementById('cfg-groq-model');
-const cfgVoice = document.getElementById('cfg-voice');
-const cfgPitch = document.getElementById('cfg-pitch');
-const cfgRate = document.getElementById('cfg-rate');
-const pitchVal = document.getElementById('pitch-val');
-const rateVal = document.getElementById('rate-val');
-const expButtons = document.querySelectorAll('.exp-btn');
+const btnRoam = document.getElementById('btn-roam');
 const dragBar = document.getElementById('drag-bar');
 
 // ==========================================
-// 1. Server Configuration & Preferences
+// 1. Load Server Configuration (Permanent)
 // ==========================================
-let serverConfig = {
-  groq_model: 'qwen/qwen3.8-27b',
-  groq_api_key_set: false,
-  voice: 'ja-JP-NanamiNeural',
-  voice_pitch: '+4Hz',
-  voice_rate: '+0%'
-};
-
-async function loadServerConfig() {
+async function syncConfigFromServer() {
   try {
-    const res = await fetch(`${API_BASE}/api/config`);
+    const res = await fetch(`${BACKEND_URL}/api/config`);
     if (res.ok) {
-      serverConfig = await res.json();
-      if (cfgGroqModel) cfgGroqModel.value = serverConfig.groq_model || 'qwen/qwen3.8-27b';
-      if (cfgVoice) cfgVoice.value = serverConfig.voice || 'ja-JP-NanamiNeural';
-      if (cfgGroqKey && serverConfig.groq_api_key_set) {
-        cfgGroqKey.placeholder = '●●●●●●●● (Stored in .env/config.json)';
-      }
-      const pMatch = (serverConfig.voice_pitch || '').match(/([+-]?\d+)/);
-      if (pMatch && cfgPitch) {
-        cfgPitch.value = parseInt(pMatch[1]);
-        if (pitchVal) pitchVal.textContent = `${pMatch[1]}Hz`;
-      }
-      const rMatch = (serverConfig.voice_rate || '').match(/([+-]?\d+)/);
-      if (rMatch && cfgRate) {
-        cfgRate.value = parseInt(rMatch[1]);
-        if (rateVal) rateVal.textContent = `${rMatch[1]}%`;
-      }
+      const data = await res.json();
+      config.groqKey = data.groq_api_key || localStorage.getItem('groq_key') || '';
+      config.groqModel = data.groq_model || 'qwen/qwen3.8-27b';
+      config.voice = data.tts_voice || 'ja-JP-NanamiNeural';
+      config.pitch = data.tts_pitch || '+4Hz';
+      config.rate = data.tts_rate || '+0%';
+      console.log('Server config loaded, key active:', data.has_key);
     }
-  } catch (err) {
-    console.warn('Backend not responding yet:', err);
+  } catch (e) {
+    console.warn('Could not sync config from server:', e);
   }
 }
 
 // ==========================================
-// 2. 3D Procedural Skeletal Life Engine (VRM)
+// 2. Desktop Roaming & Autonomous Life Engine
 // ==========================================
-class VRMProceduralLifeEngine {
-  constructor(vrm, camera, renderer, scene) {
-    this.vrm = vrm;
-    this.camera = camera;
-    this.renderer = renderer;
-    this.scene = scene;
-    this.humanoid = vrm.humanoid;
-    this.expressions = vrm.expressionManager;
+class DesktopLifeEngine {
+  constructor(model) {
+    this.model = model;
+    this.time = 0;
 
-    // Standard Humanoid Normalized Bones
-    this.bones = {
-      hips: this.humanoid.getNormalizedBoneNode('hips'),
-      spine: this.humanoid.getNormalizedBoneNode('spine'),
-      chest: this.humanoid.getNormalizedBoneNode('chest'),
-      neck: this.humanoid.getNormalizedBoneNode('neck'),
-      head: this.humanoid.getNormalizedBoneNode('head'),
-      leftUpperLeg: this.humanoid.getNormalizedBoneNode('leftUpperLeg'),
-      leftLowerLeg: this.humanoid.getNormalizedBoneNode('leftLowerLeg'),
-      leftFoot: this.humanoid.getNormalizedBoneNode('leftFoot'),
-      rightUpperLeg: this.humanoid.getNormalizedBoneNode('rightUpperLeg'),
-      rightLowerLeg: this.humanoid.getNormalizedBoneNode('rightLowerLeg'),
-      rightFoot: this.humanoid.getNormalizedBoneNode('rightFoot'),
-      leftUpperArm: this.humanoid.getNormalizedBoneNode('leftUpperArm'),
-      leftLowerArm: this.humanoid.getNormalizedBoneNode('leftLowerArm'),
-      leftHand: this.humanoid.getNormalizedBoneNode('leftHand'),
-      rightUpperArm: this.humanoid.getNormalizedBoneNode('rightUpperArm'),
-      rightLowerArm: this.humanoid.getNormalizedBoneNode('rightLowerArm'),
-      rightHand: this.humanoid.getNormalizedBoneNode('rightHand'),
-    };
+    // Dimensions & Positioning
+    this.groundY = window.innerHeight - 440;
+    this.baseScale = 0.42;
+    this.facing = 1; // 1 = right, -1 = left
 
-    // Store base initial transform
-    this.baseHipY = this.bones.hips ? this.bones.hips.position.y : 0.85;
-
-    // Life States & Timing
+    // Pet State Machine
     this.state = PET_STATES.IDLE;
     this.stateTimer = 0;
-    this.stateDuration = 4.0;
-    this.time = 0;
-    this.cycle = 0;
+    this.stateDuration = 6.0;
 
-    // Desktop Positioning (Screen pixels to 3D world space)
-    this.screenX = window.innerWidth * 0.78;
-    this.targetScreenX = this.screenX;
-    this.facing = -1; // -1 = facing left/user, 1 = facing right
-    this.currentFacing = -1;
-    this.scale = 0.65;
-    this.modelYOffset = -0.92; // Grounded on bottom taskbar ledge
-    this.jumpY = 0;
-    this.jumpProgress = 0;
+    // Movement Navigation
+    this.targetX = model.x;
+    this.moveSpeed = 95;
+    this.walkCycle = 0;
 
-    // Mouse Tracking & Gaze
-    this.rawMouseX = window.innerWidth / 2;
-    this.rawMouseY = window.innerHeight / 2;
-    this.lookTarget = new THREE.Vector3(0, 1.2, 4.0);
+    // Hop / Jump Physics
+    this.hopVY = 0;
+    this.hopPhase = 0; // 0=crouch, 1=airborne, 2=land
 
-    // Blinking
-    this.blinkTimer = 0;
-    this.blinkInterval = 3.5;
+    // 3D Head & Torso Angles
+    this.angleX = 0;
+    this.angleY = 0;
+    this.angleZ = 0;
+    this.targetAngleX = 0;
+    this.targetAngleY = 0;
+    this.targetAngleZ = 0;
+
+    this.bodyX = 0;
+    this.bodyY = 0;
+    this.bodyZ = 0;
+    this.lean = 0;
+    this.targetLean = 0;
+
+    // Eye Gaze & Saccades
+    this.eyeX = 0;
+    this.eyeY = 0;
+    this.saccadeX = 0;
+    this.saccadeY = 0;
+    this.saccadeTimer = 0;
+    this.nextSaccade = 1.8;
+
+    // Biological Blinking
+    this.blinkValue = 1.0;
     this.isBlinking = false;
+    this.blinkTimer = 0;
+    this.nextBlink = 3.2;
     this.blinkProgress = 0;
 
-    // Speech & Lip Sync
+    // Mouse Tracking
+    this.userMouseX = 0;
+    this.userMouseY = 0;
+    this.rawMouseX = window.innerWidth / 2;
+    this.rawMouseY = window.innerHeight / 2;
+    this.lastMouseMoveTime = Date.now();
+
+    // Speech Audio Reactive
     this.speakingEnergy = 0;
     this.mouthOpen = 0;
 
     // Touch Feedback
-    this.touchBlush = 0;
+    this.touchPuff = 0;
     this.touchPout = 0;
-    this.touchStartle = 0;
+    this.touchRecoil = 0;
 
-    // Dragging
-    this.isDragging = false;
-    this.dragOffsetX = 0;
-  }
-
-  // Convert desktop screen pixel X into 3D world space X
-  updateWorldPosition() {
-    const aspect = window.innerWidth / window.innerHeight;
-    const fov = this.camera.fov;
-    const dist = this.camera.position.z;
-    const visibleHeight = 2.0 * dist * Math.tan(THREE.MathUtils.degToRad(fov / 2.0));
-    const visibleWidth = visibleHeight * aspect;
-
-    // Map screenX (0 to innerWidth) to Three.js worldX (-visibleWidth/2 to +visibleWidth/2)
-    const normX = (this.screenX / window.innerWidth) - 0.5;
-    const worldX = normX * visibleWidth;
-
-    if (this.vrm.scene) {
-      this.vrm.scene.position.x = worldX;
-      this.vrm.scene.position.y = this.modelYOffset + this.jumpY;
-      this.vrm.scene.position.z = 0;
-
-      // Smooth facing rotation
-      const targetRotY = this.facing === 1 ? Math.PI * 0.35 : -Math.PI * 0.35;
-      this.currentFacing += (targetRotY - this.currentFacing) * 0.12;
-      this.vrm.scene.rotation.y = this.currentFacing;
-    }
+    // Thought state
+    this.isThinking = false;
   }
 
   update(dt) {
     this.time += dt;
-    this.stateTimer += dt;
 
-    // Update state machine if roaming is enabled
-    if (isRoamingEnabled && !this.isDragging) {
+    // 1. Update Pet State Machine (Walk, Run, Hop, Sit, Sleep)
+    if (!isWindowDragging) {
       this.updateStateMachine(dt);
-    } else if (!isRoamingEnabled && this.state !== PET_STATES.IDLE && this.state !== PET_STATES.SLEEP) {
-      this.state = PET_STATES.IDLE;
     }
 
-    // Apply procedural skeletal kinematics according to state
-    this.applySkeletalKinematics(dt);
+    // 2. Breathing & Body Sway
+    const isSleeping = this.state === PET_STATES.SLEEP;
+    const breathFreq = isSleeping ? 1.2 : 1.9;
+    const breath = (Math.sin(this.time * breathFreq) + 1) * 0.5;
+    const totalBreath = isSleeping ? breath * 0.7 : breath;
 
-    // Natural eye blinking
-    this.updateBlinking(dt);
-
-    // Mouse gaze tracking
-    this.updateGazeTracking(dt);
-
-    // Speech lip sync
-    this.updateLipSync(dt);
-
-    // Touch feedback decay
-    this.touchBlush = Math.max(0, this.touchBlush - dt * 0.6);
-    this.touchPout = Math.max(0, this.touchPout - dt * 0.7);
-    this.touchStartle = Math.max(0, this.touchStartle - dt * 1.5);
-
-    // Position in world space
-    this.updateWorldPosition();
-
-    // Update SpringBone physics (hair and skirt cloth dynamics)
-    if (this.vrm.springBoneManager) {
-      this.vrm.springBoneManager.update(dt);
+    // 3. Eye Saccades
+    this.saccadeTimer += dt;
+    if (this.saccadeTimer >= this.nextSaccade) {
+      this.saccadeTimer = 0;
+      this.nextSaccade = 1.5 + Math.random() * 2.8;
+      if (!isSleeping && !this.isThinking) {
+        this.saccadeX = (Math.random() - 0.5) * 0.26;
+        this.saccadeY = (Math.random() - 0.5) * 0.20;
+      }
     }
 
-    // Update dialogue speech bubble position
-    this.updateDialogueBubblePosition();
+    // 4. Biological Blinking
+    if (!isSleeping) {
+      this.blinkTimer += dt;
+      if (!this.isBlinking && this.blinkTimer >= this.nextBlink) {
+        this.isBlinking = true;
+        this.blinkTimer = 0;
+        this.blinkProgress = 0;
+        this.nextBlink = 2.5 + Math.random() * 4.0;
+      }
+      if (this.isBlinking) {
+        this.blinkProgress += dt * 14.0;
+        if (this.blinkProgress <= 1.0) {
+          this.blinkValue = 1.0 - Math.sin(this.blinkProgress * Math.PI);
+        } else {
+          this.blinkValue = 1.0;
+          this.isBlinking = false;
+          if (Math.random() < 0.2) this.nextBlink = 0.18;
+        }
+      }
+    } else {
+      this.blinkValue = 0; // Eyes closed in sleep
+    }
+
+    // 5. Head Tracking & Parallax
+    this.updateHeadAndTorso(dt, isSleeping);
+
+    // 6. Speech Head Nodding
+    let speechNodY = 0;
+    let speechTiltZ = 0;
+    if (isSpeaking && this.speakingEnergy > 0.05) {
+      speechNodY = -Math.sin(this.time * 8.0) * (this.speakingEnergy * 7.0);
+      speechTiltZ = Math.sin(this.time * 4.5) * (this.speakingEnergy * 5.0);
+    }
+
+    // Smooth second-order spring/lerp for angles
+    const lerpSpeed = dt * 6.5;
+    this.angleX += (this.targetAngleX - this.angleX) * lerpSpeed;
+    this.angleY += (this.targetAngleY + speechNodY - this.angleY) * lerpSpeed;
+    this.angleZ += (this.targetAngleZ + speechTiltZ - this.angleZ) * lerpSpeed;
+
+    // Eye gaze tracks with target
+    const targetEyeX = (this.angleX / 26.0) * 0.72 + this.saccadeX;
+    const targetEyeY = (this.angleY / 20.0) * 0.72 + this.saccadeY;
+    this.eyeX += (targetEyeX - this.eyeX) * (dt * 12.0);
+    this.eyeY += (targetEyeY - this.eyeY) * (dt * 12.0);
+
+    // Body follow
+    this.bodyX += (this.angleX * 0.35 - this.bodyX) * (dt * 4.5);
+    this.bodyY += (totalBreath * 3.5 - this.bodyY) * (dt * 4.5);
+    this.bodyZ += (this.targetAngleZ * 0.4 - this.bodyZ) * (dt * 4.5);
+    this.lean += (this.targetLean - this.lean) * (dt * 3.5);
+
+    // Touch decays
+    this.touchPuff *= Math.max(0, 1.0 - dt * 2.0);
+    this.touchPout *= Math.max(0, 1.0 - dt * 2.0);
+    this.touchRecoil *= Math.max(0, 1.0 - dt * 3.0);
+
+    // 7. Apply to Live2D core model
+    this.applyParameters(totalBreath, isSleeping);
+
+    // 8. Update Dialogue Bubble Position (Follows her head!)
+    updateDialoguePosition();
   }
 
   updateStateMachine(dt) {
-    // Smoothly walk/run towards target screen coordinate
-    const dx = this.targetScreenX - this.screenX;
-    const dist = Math.abs(dx);
-
-    if (dist > 15) {
-      this.facing = dx > 0 ? 1 : -1;
-      const moveSpeed = (this.state === PET_STATES.RUN) ? 140 : 65;
-      this.screenX += Math.sign(dx) * Math.min(dist, moveSpeed * dt);
+    if (!roamEnabled && this.state !== PET_STATES.IDLE && this.state !== PET_STATES.SIT) {
+      this.state = PET_STATES.IDLE;
     }
 
-    // Pick new life state upon timer expiration
-    if (this.stateTimer >= this.stateDuration) {
-      this.stateTimer = 0;
-      const rand = Math.random();
-
-      if (dist > 40) {
-        // Still has distance to travel -> Walk or Run
-        this.state = (rand > 0.65) ? PET_STATES.RUN : PET_STATES.WALK;
-        this.stateDuration = 2.5 + Math.random() * 4.0;
-      } else {
-        // Reached destination -> Choose Idle, Sit, Hop, or Sleep
-        if (rand < 0.40) {
-          this.state = PET_STATES.IDLE;
-          this.stateDuration = 3.0 + Math.random() * 5.0;
-        } else if (rand < 0.65) {
-          // Wander to a new spot along the desktop taskbar
-          const margin = 180;
-          this.targetScreenX = margin + Math.random() * (window.innerWidth - margin * 2);
-          this.state = (Math.random() > 0.5) ? PET_STATES.WALK : PET_STATES.RUN;
-          this.stateDuration = 3.5 + Math.random() * 4.5;
-        } else if (rand < 0.82) {
-          this.state = PET_STATES.SIT;
-          this.stateDuration = 5.0 + Math.random() * 8.0;
-        } else if (rand < 0.93) {
-          this.state = PET_STATES.HOP;
-          this.jumpProgress = 0;
-          this.stateDuration = 1.2;
-        } else {
-          this.state = PET_STATES.SLEEP;
-          this.stateDuration = 8.0 + Math.random() * 12.0;
-        }
-      }
-    }
-  }
-
-  applySkeletalKinematics(dt) {
-    if (!this.bones.hips) return;
-
-    // Reset base limb rotations
-    const bones = this.bones;
+    this.stateTimer += dt;
 
     switch (this.state) {
-      case PET_STATES.WALK: {
-        this.cycle += dt * 4.5;
-        const stride = 0.52; // ~30 degrees stride
-        const kneeFlex = 0.85;
-        const leftPhase = this.cycle;
-        const rightPhase = this.cycle + Math.PI;
-
-        // Alternating Left Leg Stride
-        const leftSwing = Math.sin(leftPhase);
-        bones.leftUpperLeg.rotation.x = leftSwing * stride;
-        if (leftSwing < 0) {
-          // Trailing leg lifts off ground -> Knee flexes
-          bones.leftLowerLeg.rotation.x = -leftSwing * kneeFlex;
-          bones.leftFoot.rotation.x = leftSwing * 0.25;
-        } else {
-          // Advancing leg swings forward -> Knee straightens for heel plant
-          bones.leftLowerLeg.rotation.x = 0.04;
-          bones.leftFoot.rotation.x = -leftSwing * 0.12;
-        }
-
-        // Alternating Right Leg Stride (Opposite Phase)
-        const rightSwing = Math.sin(rightPhase);
-        bones.rightUpperLeg.rotation.x = rightSwing * stride;
-        if (rightSwing < 0) {
-          bones.rightLowerLeg.rotation.x = -rightSwing * kneeFlex;
-          bones.rightFoot.rotation.x = rightSwing * 0.25;
-        } else {
-          bones.rightLowerLeg.rotation.x = 0.04;
-          bones.rightFoot.rotation.x = -rightSwing * 0.12;
-        }
-
-        // Pelvis (Hips) Vertical Bounce & Sway
-        bones.hips.position.y = this.baseHipY - Math.abs(Math.sin(this.cycle * 2.0)) * 0.035;
-        bones.hips.rotation.z = Math.sin(this.cycle) * 0.04;
-        bones.hips.rotation.y = -Math.sin(this.cycle) * 0.07;
-
-        // Spine Counter-Rotation & Posture
-        bones.spine.rotation.y = Math.sin(this.cycle) * 0.05;
-        bones.spine.rotation.x = 0.06;
-
-        // Arms swing in opposition to legs
-        bones.leftUpperArm.rotation.z = -1.2;
-        bones.rightUpperArm.rotation.z = 1.2;
-        bones.leftUpperArm.rotation.x = Math.sin(rightPhase) * 0.45;
-        bones.rightUpperArm.rotation.x = Math.sin(leftPhase) * 0.45;
-        bones.leftLowerArm.rotation.y = 0.2;
-        bones.rightLowerArm.rotation.y = -0.2;
-        break;
-      }
-
-      case PET_STATES.RUN: {
-        this.cycle += dt * 8.2;
-        const runStride = 0.85; // ~50 degrees stride
-        const runKneeFlex = 1.35; // ~75 degrees knee lift
-        const leftPhase = this.cycle;
-        const rightPhase = this.cycle + Math.PI;
-
-        const leftSwing = Math.sin(leftPhase);
-        bones.leftUpperLeg.rotation.x = leftSwing * runStride;
-        bones.leftLowerLeg.rotation.x = leftSwing < 0 ? -leftSwing * runKneeFlex : 0.08;
-
-        const rightSwing = Math.sin(rightPhase);
-        bones.rightUpperLeg.rotation.x = rightSwing * runStride;
-        bones.rightLowerLeg.rotation.x = rightSwing < 0 ? -rightSwing * runKneeFlex : 0.08;
-
-        // Athletic Forward Lean & Hip Bounce
-        bones.spine.rotation.x = 0.22;
-        bones.chest.rotation.x = 0.08;
-        bones.hips.position.y = this.baseHipY - Math.abs(Math.sin(this.cycle * 2.0)) * 0.065 + 0.02;
-
-        // Running Arm Pumps (Elbows bent ~90°)
-        bones.leftUpperArm.rotation.z = -1.1;
-        bones.rightUpperArm.rotation.z = 1.1;
-        bones.leftUpperArm.rotation.x = Math.sin(rightPhase) * 0.85;
-        bones.rightUpperArm.rotation.x = Math.sin(leftPhase) * 0.85;
-        bones.leftLowerArm.rotation.x = -1.15;
-        bones.rightLowerArm.rotation.x = -1.15;
-        break;
-      }
-
-      case PET_STATES.HOP: {
-        this.jumpProgress += dt * 1.6;
-        const t = Math.min(1.0, this.jumpProgress);
-
-        if (t < 0.25) {
-          // 1. Squat Anticipation
-          const sq = t / 0.25;
-          bones.hips.position.y = this.baseHipY - sq * 0.09;
-          bones.leftUpperLeg.rotation.x = -sq * 0.45;
-          bones.rightUpperLeg.rotation.x = -sq * 0.45;
-          bones.leftLowerLeg.rotation.x = sq * 0.85;
-          bones.rightLowerLeg.rotation.x = sq * 0.85;
-          bones.leftUpperArm.rotation.x = -sq * 0.35;
-          bones.rightUpperArm.rotation.x = -sq * 0.35;
-          this.jumpY = 0;
-        } else if (t < 0.85) {
-          // 2. Apex / Airborne
-          const air = (t - 0.25) / 0.6;
-          const arc = Math.sin(air * Math.PI);
-          this.jumpY = arc * 0.42; // World jump height
-          bones.leftUpperLeg.rotation.x = -0.55 * arc;
-          bones.rightUpperLeg.rotation.x = -0.55 * arc;
-          bones.leftLowerLeg.rotation.x = 1.15 * arc;
-          bones.rightLowerLeg.rotation.x = 1.15 * arc;
-          bones.leftUpperArm.rotation.z = -0.7; // Joyful arms up
-          bones.rightUpperArm.rotation.z = 0.7;
-          bones.leftUpperArm.rotation.x = -0.3;
-          bones.rightUpperArm.rotation.x = -0.3;
-        } else {
-          // 3. Landing Dampening
-          const land = (t - 0.85) / 0.15;
-          const damp = 1.0 - land;
-          this.jumpY = 0;
-          bones.hips.position.y = this.baseHipY - damp * 0.07;
-          bones.leftLowerLeg.rotation.x = damp * 0.45;
-          bones.rightLowerLeg.rotation.x = damp * 0.45;
-        }
-        break;
-      }
-
-      case PET_STATES.SIT: {
-        // Sit Gracefully on the Taskbar Ledge
-        this.jumpY = 0;
-        bones.hips.position.y = this.baseHipY - 0.38; // Lower hips to sitting level
-        bones.leftUpperLeg.rotation.x = -1.45; // Thighs extended forward 85°
-        bones.rightUpperLeg.rotation.x = -1.45;
-        bones.leftUpperLeg.rotation.z = -0.06;
-        bones.rightUpperLeg.rotation.z = 0.06;
-        bones.leftLowerLeg.rotation.x = 1.42; // Calves hanging down naturally
-        bones.rightLowerLeg.rotation.x = 1.42;
-        bones.leftFoot.rotation.x = 0.1;
-        bones.rightFoot.rotation.x = 0.1;
-
-        // Upright gentle spine
-        const breath = Math.sin(this.time * 1.8) * 0.02;
-        bones.spine.rotation.x = -0.06 + breath;
-        bones.chest.rotation.x = breath * 0.7;
-
-        // Hands resting gently in lap
-        bones.leftUpperArm.rotation.z = -0.65;
-        bones.rightUpperArm.rotation.z = 0.65;
-        bones.leftUpperArm.rotation.x = 0.42;
-        bones.rightUpperArm.rotation.x = 0.42;
-        bones.leftLowerArm.rotation.y = 0.85;
-        bones.rightLowerArm.rotation.y = -0.85;
-        break;
-      }
-
-      case PET_STATES.SLEEP: {
-        // Curled Up Sleeping Pose on Taskbar
-        this.jumpY = 0;
-        bones.hips.position.y = this.baseHipY - 0.38;
-        bones.leftUpperLeg.rotation.x = -1.45;
-        bones.rightUpperLeg.rotation.x = -1.45;
-        bones.leftLowerLeg.rotation.x = 1.42;
-        bones.rightLowerLeg.rotation.x = 1.42;
-
-        // Deep slow rhythmic breathing
-        const deepBreath = Math.sin(this.time * 1.1) * 0.04;
-        bones.spine.rotation.x = -0.05 + deepBreath;
-        bones.chest.rotation.x = deepBreath * 0.9;
-
-        // Relaxed head tilt
-        bones.head.rotation.z = 0.24;
-        bones.head.rotation.x = 0.14;
-
-        // Relaxed hands
-        bones.leftUpperArm.rotation.z = -0.6;
-        bones.rightUpperArm.rotation.z = 0.6;
-        bones.leftUpperArm.rotation.x = 0.35;
-        bones.rightUpperArm.rotation.x = 0.35;
-        bones.leftLowerArm.rotation.y = 0.8;
-        bones.rightLowerArm.rotation.y = -0.8;
-
-        // Eyes peacefully closed
-        if (this.expressions) {
-          this.expressions.setValue('blink', 1.0);
-          this.expressions.setValue('relaxed', 0.6);
-        }
-        break;
-      }
-
       case PET_STATES.IDLE:
-      default: {
-        this.jumpY = 0;
-        // Breathing cycle
-        const breath = Math.sin(this.time * 2.0) * 0.022;
-        bones.chest.rotation.x = breath;
-        bones.spine.rotation.x = breath * 0.5;
+        // Standing and breathing
+        this.model.y += (this.groundY - this.model.y) * (dt * 6.0);
+        this.targetLean = 0;
 
-        // Subtle lateral weight shifting
-        const sway = Math.sin(this.time * 0.55) * 0.025;
-        bones.hips.position.y = this.baseHipY;
-        bones.hips.rotation.z = sway;
-        bones.spine.rotation.z = -sway * 0.6;
-
-        // Standing straight with relaxed legs
-        bones.leftUpperLeg.rotation.x = 0.02;
-        bones.rightUpperLeg.rotation.x = -0.02;
-        bones.leftLowerLeg.rotation.x = 0.03;
-        bones.rightLowerLeg.rotation.x = 0.03;
-        bones.leftFoot.rotation.x = 0;
-        bones.rightFoot.rotation.x = 0;
-
-        // Natural relaxed arm rest pose along body
-        bones.leftUpperArm.rotation.z = -1.25;
-        bones.rightUpperArm.rotation.z = 1.25;
-        bones.leftUpperArm.rotation.x = 0.1;
-        bones.rightUpperArm.rotation.x = 0.1;
-        bones.leftLowerArm.rotation.y = 0.3;
-        bones.rightLowerArm.rotation.y = -0.3;
-        bones.leftLowerArm.rotation.z = -0.12;
-        bones.rightLowerArm.rotation.z = 0.12;
-        break;
-      }
-    }
-
-    // Touch Feedback Overrides
-    if (this.touchStartle > 0.05) {
-      bones.head.rotation.x = -this.touchStartle * 0.3;
-      bones.spine.rotation.x = -this.touchStartle * 0.2;
-    }
-  }
-
-  updateBlinking(dt) {
-    if (this.state === PET_STATES.SLEEP) return;
-
-    this.blinkTimer += dt;
-    if (this.blinkTimer >= this.blinkInterval) {
-      this.isBlinking = true;
-      this.blinkTimer = 0;
-      this.blinkInterval = 2.4 + Math.random() * 3.6;
-    }
-
-    if (this.isBlinking) {
-      this.blinkProgress += dt * 8.0;
-      const blinkVal = Math.sin(Math.min(Math.PI, this.blinkProgress));
-      if (this.expressions) {
-        this.expressions.setValue('blink', blinkVal);
-      }
-      if (this.blinkProgress >= Math.PI) {
-        this.isBlinking = false;
-        this.blinkProgress = 0;
-        if (this.expressions) this.expressions.setValue('blink', 0);
-      }
-    }
-  }
-
-  updateGazeTracking(dt) {
-    if (this.state === PET_STATES.SLEEP || !this.bones.head) return;
-
-    const headPos = new THREE.Vector3();
-    this.bones.head.getWorldPosition(headPos);
-
-    // Unproject mouse coordinates into 3D world space
-    const normX = (this.rawMouseX / window.innerWidth) * 2 - 1;
-    const normY = -(this.rawMouseY / window.innerHeight) * 2 + 1;
-    const mouseWorld = new THREE.Vector3(normX, normY, 0.5).unproject(this.camera);
-
-    this.lookTarget.lerp(mouseWorld, 0.09);
-
-    if (this.vrm.lookAt) {
-      this.vrm.lookAt.lookAt(this.lookTarget);
-    }
-
-    // Turn head bone naturally (-40° to +40°)
-    const dx = this.lookTarget.x - headPos.x;
-    const dy = this.lookTarget.y - headPos.y;
-    const targetYaw = Math.max(-0.55, Math.min(0.55, dx * 0.35));
-    const targetPitch = Math.max(-0.35, Math.min(0.35, -dy * 0.28));
-
-    this.bones.head.rotation.y += (targetYaw - this.bones.head.rotation.y) * 0.1;
-    this.bones.head.rotation.x += (targetPitch - this.bones.head.rotation.x) * 0.1;
-  }
-
-  updateLipSync(dt) {
-    if (this.state === PET_STATES.SLEEP || !this.expressions) return;
-
-    if (isAudioPlaying && this.speakingEnergy > 0.03) {
-      this.mouthOpen += (this.speakingEnergy - this.mouthOpen) * 0.45;
-      const mouthAa = Math.min(1.0, this.mouthOpen * 1.6);
-      const mouthOh = Math.min(0.7, this.mouthOpen * 0.9);
-      this.expressions.setValue('aa', mouthAa);
-      this.expressions.setValue('oh', mouthOh);
-      this.expressions.setValue('happy', 0.4);
-    } else {
-      this.mouthOpen = Math.max(0, this.mouthOpen - dt * 6.0);
-      this.expressions.setValue('aa', this.mouthOpen);
-      this.expressions.setValue('oh', 0);
-      if (this.touchBlush > 0.05) {
-        this.expressions.setValue('happy', Math.min(1.0, this.touchBlush));
-      } else {
-        this.expressions.setValue('happy', 0);
-      }
-    }
-  }
-
-  updateDialogueBubblePosition() {
-    if (!dialogueBox || dialogueBox.classList.contains('hidden') || !this.bones.head) return;
-
-    const headPos = new THREE.Vector3();
-    this.bones.head.getWorldPosition(headPos);
-    headPos.y += 0.38; // Above head
-
-    headPos.project(this.camera);
-    const screenX = (headPos.x * 0.5 + 0.5) * window.innerWidth;
-    const screenY = (-(headPos.y * 0.5) + 0.5) * window.innerHeight;
-
-    const boxW = dialogueBox.offsetWidth || 300;
-    const boxH = dialogueBox.offsetHeight || 90;
-
-    // Constrain inside screen bounds
-    const clampX = Math.max(20, Math.min(window.innerWidth - boxW - 20, screenX - boxW / 2));
-    const clampY = Math.max(60, Math.min(window.innerHeight - boxH - 80, screenY - boxH - 15));
-
-    dialogueBox.style.left = `${clampX}px`;
-    dialogueBox.style.top = `${clampY}px`;
-  }
-}
-
-// ==========================================
-// 3. Three.js & VRM VTuber Engine Setup
-// ==========================================
-async function init3DVTuber() {
-  try {
-    console.log('Initializing Three.js 3D VTuber Engine...');
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-
-    threeScene = new THREE.Scene();
-
-    threeCamera = new THREE.PerspectiveCamera(30.0, width / height, 0.1, 100.0);
-    threeCamera.position.set(0.0, 0.0, 3.4);
-
-    threeRenderer = new THREE.WebGLRenderer({
-      canvas: canvas,
-      alpha: true,
-      antialias: true,
-      powerPreference: 'high-performance'
-    });
-    threeRenderer.setSize(width, height);
-    threeRenderer.setPixelRatio(window.devicePixelRatio || 1);
-    threeRenderer.outputColorSpace = THREE.SRGBColorSpace;
-
-    // Anime Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.3);
-    threeScene.add(ambientLight);
-
-    const dirLight = new THREE.DirectionalLight(0xfff6ee, 1.4);
-    dirLight.position.set(1.5, 3.0, 2.5);
-    threeScene.add(dirLight);
-
-    const backLight = new THREE.DirectionalLight(0xccddee, 0.8);
-    backLight.position.set(-1.5, 2.0, -2.5);
-    threeScene.add(backLight);
-
-    console.log('Loading 3D VRM model from:', VRM_MODEL_PATH);
-    const loader = new window.GLTFLoader();
-    loader.register((parser) => new window.THREE_VRM.VRMLoaderPlugin(parser));
-
-    loader.load(
-      VRM_MODEL_PATH,
-      (gltf) => {
-        const vrm = gltf.userData.vrm;
-        window.THREE_VRM.VRMUtils.removeUnnecessaryVertices(gltf.scene);
-        window.THREE_VRM.VRMUtils.combineSkeletons(gltf.scene);
-
-        threeScene.add(vrm.scene);
-        currentVrm = vrm;
-
-        // Initialize 3D Procedural Life Engine
-        vrmLifeEngine = new VRMProceduralLifeEngine(vrm, threeCamera, threeRenderer, threeScene);
-
-        console.log('3D VTuber Avatar loaded successfully!');
-        showDialogue('Yahoo! DeepSeek-chan 3D VTuber Engine activated! Master, watch me walk with real legs! [heart_eyes]');
-        speakText('Yahoo! DeepSeek-chan 3D VTuber Engine activated! Master, watch me walk with real legs!');
-      },
-      (progress) => {
-        console.log('Loading VRM model:', Math.round((progress.loaded / progress.total) * 100) + '%');
-      },
-      (err) => {
-        console.error('Failed to load VRM model:', err);
-        showDialogue('Failed to load 3D VRM model: ' + err.message);
-      }
-    );
-
-    // 60 FPS Render Loop
-    let lastTime = performance.now();
-    function animate(now) {
-      requestAnimationFrame(animate);
-      const dt = Math.min(0.1, (now - lastTime) / 1000);
-      lastTime = now;
-
-      if (currentEngineMode === '3d') {
-        if (vrmLifeEngine) {
-          vrmLifeEngine.update(dt);
+        if (roamEnabled && this.stateTimer >= this.stateDuration && !isSpeaking && !this.isThinking) {
+          this.pickNextState();
         }
-        threeRenderer.render(threeScene, threeCamera);
+        break;
+
+      case PET_STATES.WALK:
+        this.walkCycle += dt * 6.5;
+        const dx = this.targetX - this.model.x;
+        const dist = Math.abs(dx);
+
+        if (dist > 12) {
+          const moveDir = dx > 0 ? 1 : -1;
+          this.facing = moveDir;
+          this.model.scale.x = Math.abs(this.baseScale) * this.facing;
+          this.model.x += moveDir * this.moveSpeed * dt;
+
+          // Cute walking step bounce
+          this.model.y = this.groundY + Math.abs(Math.sin(this.walkCycle * 2)) * -9;
+        } else {
+          // Reached destination!
+          this.state = Math.random() < 0.4 ? PET_STATES.HOP : PET_STATES.IDLE;
+          this.stateTimer = 0;
+          this.stateDuration = 4.0 + Math.random() * 6.0;
+        }
+        break;
+
+      case PET_STATES.RUN:
+        this.walkCycle += dt * 11.0;
+        const rdx = this.targetX - this.model.x;
+        const rdist = Math.abs(rdx);
+
+        if (rdist > 16) {
+          const rDir = rdx > 0 ? 1 : -1;
+          this.facing = rDir;
+          this.model.scale.x = Math.abs(this.baseScale) * this.facing;
+          this.model.x += rDir * (this.moveSpeed * 2.2) * dt;
+          this.targetLean = 0.85;
+
+          // Energetic run bounce
+          this.model.y = this.groundY + Math.abs(Math.sin(this.walkCycle * 2)) * -16;
+        } else {
+          this.targetLean = 0;
+          this.state = PET_STATES.IDLE;
+          this.stateTimer = 0;
+          this.stateDuration = 5.0;
+        }
+        break;
+
+      case PET_STATES.HOP:
+        this.handleHopState(dt);
+        break;
+
+      case PET_STATES.SIT:
+        // Lowers down to sit on taskbar
+        const sitY = this.groundY + 36;
+        this.model.y += (sitY - this.model.y) * (dt * 5.0);
+
+        if (this.stateTimer >= this.stateDuration && !isSpeaking) {
+          if (Math.random() < 0.45) {
+            // Falls asleep!
+            this.state = PET_STATES.SLEEP;
+            this.stateTimer = 0;
+            this.stateDuration = 25.0 + Math.random() * 30.0;
+            showDialogue("DeepSeek-chan is napping peacefully... zZz");
+          } else {
+            // Stands back up
+            this.state = PET_STATES.IDLE;
+            this.stateTimer = 0;
+            this.stateDuration = 5.0;
+          }
+        }
+        break;
+
+      case PET_STATES.SLEEP:
+        // Napping peacefully
+        const sleepY = this.groundY + 36;
+        this.model.y += (sleepY - this.model.y) * (dt * 4.0);
+
+        if (this.stateTimer >= this.stateDuration || isSpeaking) {
+          this.wakeUp();
+        }
+        break;
+    }
+  }
+
+  pickNextState() {
+    this.stateTimer = 0;
+    const rand = Math.random();
+
+    if (rand < 0.45) {
+      // Walk somewhere
+      this.state = PET_STATES.WALK;
+      this.targetX = 100 + Math.random() * (window.innerWidth - 280);
+      this.moveSpeed = 85 + Math.random() * 25;
+      this.stateDuration = 12.0;
+    } else if (rand < 0.65) {
+      // Sit down
+      this.state = PET_STATES.SIT;
+      this.stateDuration = 14.0 + Math.random() * 20.0;
+    } else if (rand < 0.85) {
+      // Hop joyfully
+      this.state = PET_STATES.HOP;
+      this.hopPhase = 0;
+      this.hopVY = 0;
+      this.stateDuration = 2.0;
+    } else {
+      // Playful run
+      this.state = PET_STATES.RUN;
+      this.targetX = 120 + Math.random() * (window.innerWidth - 300);
+      this.stateDuration = 8.0;
+    }
+  }
+
+  handleHopState(dt) {
+    if (this.hopPhase === 0) {
+      // Crouch windup
+      this.model.y += ((this.groundY + 12) - this.model.y) * (dt * 15.0);
+      if (this.stateTimer > 0.18) {
+        this.hopPhase = 1;
+        this.hopVY = -15.5; // Launch!
+      }
+    } else if (this.hopPhase === 1) {
+      // Airborne
+      this.hopVY += 34.0 * dt; // Gravity
+      this.model.y += this.hopVY;
+      this.model.x += this.facing * 35.0 * dt;
+
+      if (this.model.y >= this.groundY) {
+        this.model.y = this.groundY;
+        this.hopPhase = 2;
+        this.stateTimer = 0;
+      }
+    } else if (this.hopPhase === 2) {
+      // Land squash recovery
+      if (this.stateTimer > 0.15) {
+        this.state = PET_STATES.IDLE;
+        this.stateTimer = 0;
+        this.stateDuration = 4.0;
       }
     }
-    requestAnimationFrame(animate);
+  }
 
-    // Window Resize Handler
-    window.addEventListener('resize', () => {
-      if (threeCamera && threeRenderer) {
-        threeCamera.aspect = window.innerWidth / window.innerHeight;
-        threeCamera.updateProjectionMatrix();
-        threeRenderer.setSize(window.innerWidth, window.innerHeight);
-      }
-    });
+  wakeUp() {
+    this.state = PET_STATES.IDLE;
+    this.stateTimer = 0;
+    this.stateDuration = 5.0;
+    triggerExpression('blush');
+    showDialogue("Fwaaah... Good morning, Master! Did I doze off? [blush]");
+    speakText("Fwaaah... Good morning, Master! Did I doze off?");
+  }
 
-  } catch (err) {
-    console.error('Error initializing 3D VTuber Engine:', err);
+  updateHeadAndTorso(dt, isSleeping) {
+    const timeSinceMouseMove = (Date.now() - this.lastMouseMoveTime) / 1000;
+
+    if (isSleeping) {
+      // Head nods down in deep sleep
+      this.targetAngleX = 0;
+      this.targetAngleY = -22.0;
+      this.targetAngleZ = 12.0 * this.facing;
+      return;
+    }
+
+    if (this.isThinking) {
+      this.targetAngleX = 14.0 * this.facing;
+      this.targetAngleY = 12.0;
+      this.targetAngleZ = 8.0;
+      return;
+    }
+
+    if (this.state === PET_STATES.WALK || this.state === PET_STATES.RUN) {
+      // Look in walking direction
+      this.targetAngleX = 14.0 * this.facing;
+      this.targetAngleY = 2.0;
+      this.targetAngleZ = Math.sin(this.walkCycle * 2) * -5.0 * this.facing;
+      return;
+    }
+
+    if (timeSinceMouseMove < 4.5) {
+      // Active tracking of user cursor relative to model head
+      const headScreenX = this.model.x;
+      const headScreenY = this.model.y - 200;
+      const dx = (this.rawMouseX - headScreenX) / window.innerWidth;
+      const dy = (this.rawMouseY - headScreenY) / window.innerHeight;
+
+      this.targetAngleX = Math.max(-28, Math.min(28, dx * 50.0));
+      this.targetAngleY = Math.max(-20, Math.min(20, -dy * 40.0));
+      this.targetAngleZ = -this.targetAngleX * 0.18;
+    } else {
+      // Autonomous wander gaze
+      this.targetAngleX = (Math.sin(this.time * 0.4) * 16.0 + Math.sin(this.time * 0.9) * 7.0) * this.facing;
+      this.targetAngleY = Math.cos(this.time * 0.35) * 8.0;
+      this.targetAngleZ = Math.sin(this.time * 0.5) * 4.0;
+    }
+  }
+
+  applyParameters(totalBreath, isSleeping) {
+    const core = this.model?.internalModel?.coreModel;
+    if (!core) return;
+
+    const set = (id, val) => {
+      try { core.setParameterValueById(id, val); } catch (e) {}
+    };
+
+    // 3D Angles
+    set('AngleX', this.angleX);
+    set('AngleY', this.angleY);
+    set('AngleZ', this.angleZ);
+    set('ParamAngleX', this.angleX);
+    set('ParamAngleY', this.angleY);
+    set('ParamAngleZ', this.angleZ);
+
+    // 3D Torso Parallax
+    set('ParamBodyAngleX', this.bodyX * 0.5);
+    set('ParamBodyAngleY', this.bodyY * 0.4);
+    set('ParamBodyAngleZ', this.bodyZ);
+
+    // Volumetric Body Position Shift
+    set('PositionX', -this.angleX * 0.12 + this.bodyX * 0.08);
+    set('PositionY', this.bodyY * 0.08);
+    set('PositionZ', this.bodyZ * 0.1 - this.touchRecoil);
+
+    // Breathing & Shoulders
+    set('ParamBreath', totalBreath);
+    set('ShoulderY', totalBreath * 0.35);
+
+    // Gaze & Pupils
+    set('ParamEyeBallX', this.eyeX);
+    set('ParamEyeBallY', this.eyeY);
+    set('PupilX', this.eyeX * 0.5);
+    set('PupilY', this.eyeY * 0.5);
+
+    // Blinking
+    set('ParamEyeLOpen', this.blinkValue);
+    set('ParamEyeROpen', this.blinkValue);
+
+    // Sitting & Leg folding
+    if (this.state === PET_STATES.SIT || isSleeping) {
+      set('Param33', 1.0); // Legs together
+      set('HipAngleX', -8.0);
+      set('ParamBodyAngleY', -6.0);
+    } else if (this.state === PET_STATES.WALK || this.state === PET_STATES.RUN) {
+      // Walking legs
+      set('LEGAngleZ2', Math.sin(this.walkCycle * 2) * 16.0 * this.facing);
+      set('HipAngleZ', Math.sin(this.walkCycle * 2) * 8.0 * this.facing);
+      set('ParamBodyAngleZ', Math.sin(this.walkCycle * 2) * 6.0 * this.facing);
+    } else {
+      set('Param33', 0.0);
+    }
+
+    // Curious Lean Posture
+    set('LeanInput', this.lean);
+
+    // Tail Swaying
+    const tailSpeed = (this.state === PET_STATES.RUN) ? 4.5 : 2.2;
+    const tailCycle = Math.sin(this.time * tailSpeed);
+    set('Param_Angle_Rotation84', tailCycle * 14.0);
+    set('Param_Angle_Rotation85', tailCycle * 18.0);
+    set('Param_Angle_Rotation86', tailCycle * 22.0);
+
+    // Speech-Driven Mouth & Emoting
+    if (isSpeaking) {
+      set('ParamMouthOpenY', this.mouthOpen);
+      set('ParamMouthForm', 0.75); // Smile while talking
+      set('JawOpen', this.mouthOpen * 0.8);
+      set('EyeSmile', 0.45);
+      set('ParamBrowLY', 0.25 + this.speakingEnergy * 0.4);
+      set('ParamBrowRY', 0.25 + this.speakingEnergy * 0.4);
+    } else if (isSleeping) {
+      set('EyeSmile', 0.8);
+      set('ParamMouthForm', 0.3);
+    } else {
+      set('ParamMouthForm', 0.2);
+    }
+
+    // Touch Feedback
+    if (this.touchPuff > 0.05) set('CheeckPuff', this.touchPuff);
+    if (this.touchPout > 0.05) set('Mouthpucker', this.touchPout);
   }
 }
 
 // ==========================================
-// 4. Live2D Engine Fallback (Dual Engine)
+// 3. Live2D & PixiJS Initialization
 // ==========================================
 async function initLive2D() {
   try {
@@ -741,248 +553,304 @@ async function initLive2D() {
       resizeTo: window
     });
 
-    console.log('Loading Live2D model from:', LIVE2D_MODEL_PATH);
-    live2dModel = await PIXI.live2d.Live2DModel.from(LIVE2D_MODEL_PATH, {
+    console.log('Loading DeepSeek-chan from:', MODEL_PATH);
+    live2dModel = await PIXI.live2d.Live2DModel.from(MODEL_PATH, {
       autoInteract: false
     });
+
     pixiApp.stage.addChild(live2dModel);
 
-    // Scale and position
-    const targetH = Math.min(480, window.innerHeight * 0.52);
-    const scale = targetH / live2dModel.height;
-    live2dModel.scale.set(scale);
-    live2dModel.x = window.innerWidth * 0.75;
-    live2dModel.y = window.innerHeight - targetH * 0.94;
+    // Initialize Desktop Life Engine
+    lifeEngine = new DesktopLifeEngine(live2dModel);
+
+    // Hook life engine into 60 FPS ticker
+    pixiApp.ticker.add((delta) => {
+      lifeEngine.update(delta / 60);
+    });
+
+    // Parameter hook right before drawing
+    if (live2dModel.internalModel) {
+      live2dModel.internalModel.on('beforeModelUpdate', () => {
+        if (lifeEngine) lifeEngine.applyParameters(1.0, lifeEngine.state === PET_STATES.SLEEP);
+      });
+    }
+
+    updateModelLayout();
+    window.addEventListener('resize', updateModelLayout);
+
+    // Global cursor tracking & smart mouse forwarding
+    window.addEventListener('mousemove', (e) => {
+      if (lifeEngine) {
+        lifeEngine.rawMouseX = e.clientX;
+        lifeEngine.rawMouseY = e.clientY;
+        lifeEngine.lastMouseMoveTime = Date.now();
+      }
+
+      // Check if mouse is hovering over character or UI
+      checkPointerHover(e.clientX, e.clientY);
+    });
+
+    setupModelInteractivity();
+
+    console.log('DeepSeek-chan Desktop Roaming Pet initialized successfully!');
+
+    // Greeting
+    setTimeout(() => {
+      triggerExpression('blush');
+      triggerMotion('Wave');
+      showDialogue("Master! Yahoo~ I can freely hop and roam across your entire desktop now! [heart_eyes]");
+      speakText("Master! Yahoo~ I can freely hop and roam across your entire desktop now!");
+    }, 1200);
 
   } catch (err) {
-    console.warn('Live2D fallback notice:', err);
+    console.error('Failed to initialize Live2D model:', err);
+    showDialogue('Failed to load Live2D model: ' + err.message);
   }
 }
 
-function switchEngineMode(mode) {
-  currentEngineMode = mode;
-  if (btnMode) {
-    btnMode.textContent = mode === '3d' ? '🎭 3D' : '🎨 2D';
-    btnMode.title = mode === '3d' ? 'Current: 3D VTuber Engine (Click for 2D)' : 'Current: 2D Live2D Engine (Click for 3D)';
+function updateModelLayout() {
+  if (!live2dModel) return;
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  // Scale model to a comfortable pet size (~450px tall)
+  const targetHeight = Math.min(480, height * 0.52);
+  const scale = targetHeight / live2dModel.height;
+
+  if (lifeEngine) {
+    lifeEngine.baseScale = scale;
+    lifeEngine.groundY = height - targetHeight * 0.94;
   }
 
-  if (mode === '3d') {
-    if (canvas) canvas.style.display = 'block';
-    showDialogue('Switched to 3D VTuber Avatar with skeletal bones!');
-  } else {
-    if (!pixiApp) initLive2D();
-    showDialogue('Switched to 2D Live2D avatar!');
+  live2dModel.scale.set(scale);
+
+  // Position at bottom-right initially
+  if (!live2dModel.x || live2dModel.x === 0) {
+    live2dModel.x = width - targetHeight * 0.85;
+    live2dModel.y = height - targetHeight * 0.94;
+    if (lifeEngine) lifeEngine.targetX = live2dModel.x;
   }
 }
 
 // ==========================================
-// 5. Smart Click-Through & 3D Raycasting
+// 4. Smart Click-Through & Dialogue Following
 // ==========================================
-const raycaster = new (window.THREE ? THREE.Raycaster : function(){})();
-const mouseNdc = new (window.THREE ? THREE.Vector2 : function(){})();
-let isPointerOverModel = false;
-
-function isPointInElement(el, x, y) {
-  if (!el || el.classList.contains('hidden')) return false;
-  const rect = el.getBoundingClientRect();
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-}
+let isMouseCaptured = false;
 
 function checkPointerHover(x, y) {
   let shouldCapture = false;
 
-  // 1. UI Elements
-  if (isPointInElement(chatDock, x, y)) shouldCapture = true;
-  if (isPointInElement(dragBar, x, y)) shouldCapture = true;
-  if (isPointInElement(dialogueBox, x, y)) shouldCapture = true;
-  if (isPointInElement(settingsModal, x, y)) shouldCapture = true;
-
-  // 2. 3D Raycasting Check on Waifu Mesh
-  if (currentEngineMode === '3d' && currentVrm && threeCamera) {
-    mouseNdc.x = (x / window.innerWidth) * 2 - 1;
-    mouseNdc.y = -(y / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(mouseNdc, threeCamera);
-    const hits = raycaster.intersectObjects(currentVrm.scene.children, true);
-    if (hits.length > 0) {
-      shouldCapture = true;
-      isPointerOverModel = true;
-    } else {
-      isPointerOverModel = false;
-    }
-  } else if (currentEngineMode === '2d' && live2dModel) {
+  // 1. Check Live2D character bounds
+  if (live2dModel) {
     const bounds = live2dModel.getBounds();
-    if (bounds.contains(x, y)) {
-      shouldCapture = true;
-      isPointerOverModel = true;
-    } else {
-      isPointerOverModel = false;
-    }
+    if (bounds.contains(x, y)) shouldCapture = true;
   }
 
-  // Forward click-through state to Electron BrowserWindow
-  ipcRenderer.send('set-clickthrough', !shouldCapture);
+  // 2. Check UI elements
+  if (isPointInElement(chatDock, x, y)) shouldCapture = true;
+  if (!dialogueBox.classList.contains('hidden') && isPointInElement(dialogueBox, x, y)) shouldCapture = true;
+  if (!settingsModal.classList.contains('hidden') && isPointInElement(settingsModal, x, y)) shouldCapture = true;
+  if (isPointInElement(dragBar, x, y)) shouldCapture = true;
+
+  if (shouldCapture !== isMouseCaptured) {
+    isMouseCaptured = shouldCapture;
+    ipcRenderer.send('set-clickthrough', !shouldCapture);
+  }
 }
 
-// Global Mouse Move Listener
-window.addEventListener('mousemove', (e) => {
-  if (vrmLifeEngine) {
-    vrmLifeEngine.rawMouseX = e.clientX;
-    vrmLifeEngine.rawMouseY = e.clientY;
+function isPointInElement(el, x, y) {
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+}
 
-    // Handle Dragging
-    if (vrmLifeEngine.isDragging) {
-      vrmLifeEngine.screenX = e.clientX - vrmLifeEngine.dragOffsetX;
-      vrmLifeEngine.targetScreenX = vrmLifeEngine.screenX;
+function updateDialoguePosition() {
+  if (!live2dModel || dialogueBox.classList.contains('hidden')) return;
+
+  const bubbleWidth = dialogueBox.offsetWidth || 300;
+  let targetX = live2dModel.x - (bubbleWidth / 2);
+  targetX = Math.max(20, Math.min(window.innerWidth - bubbleWidth - 20, targetX));
+
+  let targetY = live2dModel.y - 120;
+  targetY = Math.max(24, targetY);
+
+  dialogueBox.style.left = `${targetX}px`;
+  dialogueBox.style.top = `${targetY}px`;
+}
+
+// ==========================================
+// 5. Tactile Touch & Drag Interactions
+// ==========================================
+let isWindowDragging = false;
+let pointerStartX = 0;
+let pointerStartY = 0;
+let modelStartX = 0;
+let modelStartY = 0;
+
+function setupModelInteractivity() {
+  canvas.addEventListener('pointerdown', (e) => {
+    pointerStartX = e.clientX;
+    pointerStartY = e.clientY;
+    modelStartX = live2dModel.x;
+    modelStartY = live2dModel.y;
+    isWindowDragging = false;
+  });
+
+  window.addEventListener('pointermove', (e) => {
+    const dist = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY);
+    if (dist > 8 && pointerStartX !== 0) {
+      isWindowDragging = true;
+      live2dModel.x = modelStartX + (e.clientX - pointerStartX);
+      live2dModel.y = modelStartY + (e.clientY - pointerStartY);
+      if (lifeEngine) lifeEngine.targetX = live2dModel.x;
     }
-  }
+  });
 
-  checkPointerHover(e.clientX, e.clientY);
-});
+  window.addEventListener('pointerup', (e) => {
+    if (pointerStartX === 0) return;
+    const dist = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY);
 
-// ==========================================
-// 6. Tactile 3D Touch Interactions
-// ==========================================
-window.addEventListener('mousedown', (e) => {
-  if (e.button !== 0) return; // Left click only
-
-  // If clicking on 3D Model
-  if (currentEngineMode === '3d' && currentVrm && threeCamera) {
-    mouseNdc.x = (e.clientX / window.innerWidth) * 2 - 1;
-    mouseNdc.y = -(e.clientX / window.innerHeight) * 2 + 1;
-    raycaster.setFromCamera(mouseNdc, threeCamera);
-    const hits = raycaster.intersectObjects(currentVrm.scene.children, true);
-
-    if (hits.length > 0) {
-      const hit = hits[0];
-      const hitY = hit.point.y; // 3D height of hit
-
-      if (vrmLifeEngine) {
-        vrmLifeEngine.isDragging = true;
-        vrmLifeEngine.dragOffsetX = e.clientX - vrmLifeEngine.screenX;
-      }
-
-      // 1. HEAD PAT (Upper hit point)
-      if (hitY > 0.45) {
-        if (vrmLifeEngine) vrmLifeEngine.touchBlush = 1.0;
-        triggerExpression('happy');
-        const patLines = [
-          "Ehehe~ Your headpats feel so warm, Master! [blush]",
-          "Nyaa~ Keep patting me! I love this so much! [heart_eyes]",
-          "Hehe, I'm your favorite desktop companion, right? [happy]"
-        ];
-        const line = patLines[Math.floor(Math.random() * patLines.length)];
-        showDialogue(line);
-        speakText(line);
-      }
-      // 2. CHEEK PINCH (Mid-high hit point)
-      else if (hitY > 0.25) {
-        if (vrmLifeEngine) vrmLifeEngine.touchPout = 1.0;
-        triggerExpression('relaxed');
-        const squishLines = [
-          "Mwaaah! Why are you squishing my cheeks?! [surprised]",
-          "Mou~ Master! My face is not mochi, you know! [blush]",
-          "Hehe, that tickles! Stop pinching me so cutely! [happy]"
-        ];
-        const line = squishLines[Math.floor(Math.random() * squishLines.length)];
-        showDialogue(line);
-        speakText(line);
-      }
-      // 3. TORSO POKE (Lower hit point)
-      else {
-        if (vrmLifeEngine) {
-          vrmLifeEngine.touchStartle = 1.0;
-          vrmLifeEngine.state = PET_STATES.HOP;
-          vrmLifeEngine.jumpProgress = 0;
-        }
-        triggerExpression('surprised');
-        const pokeLines = [
-          "Wah! Master! You startled me! [surprised]",
-          "Eep! Don't poke me so suddenly! [blush]",
-          "Hehe! You want to play with me? Let's go! [heart_eyes]"
-        ];
-        const line = pokeLines[Math.floor(Math.random() * pokeLines.length)];
-        showDialogue(line);
-        speakText(line);
-      }
+    if (dist <= 8 && !isWindowDragging) {
+      handleModelTouch(e.clientX, e.clientY);
     }
-  }
-});
 
-window.addEventListener('mouseup', () => {
-  if (vrmLifeEngine) {
-    vrmLifeEngine.isDragging = false;
+    pointerStartX = 0;
+    pointerStartY = 0;
+    isWindowDragging = false;
+  });
+}
+
+function handleModelTouch(clientX, clientY) {
+  if (!live2dModel) return;
+
+  // Wake up if sleeping
+  if (lifeEngine && lifeEngine.state === PET_STATES.SLEEP) {
+    lifeEngine.wakeUp();
+    return;
   }
-});
+
+  const bounds = live2dModel.getBounds();
+  if (!bounds.contains(clientX, clientY)) return;
+
+  const relY = (clientY - bounds.y) / bounds.height;
+  const relX = (clientX - bounds.x) / bounds.width;
+
+  if (relY < 0.35) {
+    // 1. HEAD PAT!
+    triggerExpression('blush');
+    triggerExpression('heart_eyes');
+    if (lifeEngine) {
+      lifeEngine.targetAngleY = 14.0;
+      lifeEngine.targetAngleZ = 6.0;
+    }
+
+    const patLines = [
+      "Ehehe~ Headpats from Master make me so happy! [heart_eyes]",
+      "Wah~ Master's hand is so warm and gentle... [blush]",
+      "Hai~ More pats please! I'm your good girl! [heart_eyes]"
+    ];
+    const line = patLines[Math.floor(Math.random() * patLines.length)];
+    showDialogue(line);
+    speakText(line);
+
+  } else if (relY >= 0.35 && relY < 0.52 && (relX < 0.36 || relX > 0.64)) {
+    // 2. CHEEK PINCH!
+    triggerExpression('blush');
+    if (lifeEngine) {
+      lifeEngine.touchPuff = 1.0;
+      lifeEngine.touchPout = 0.85;
+    }
+
+    const cheekLines = [
+      "Mou~ Master! My cheeks are not mochi! Stop squishing! [smug]",
+      "Eep! Master is so naughty today! But it feels cute, ehehe~ [blush]",
+      "Pout~ If you squish my cheeks, I won't share my snacks! [smug]"
+    ];
+    const line = cheekLines[Math.floor(Math.random() * cheekLines.length)];
+    showDialogue(line);
+    speakText(line);
+
+  } else {
+    // 3. TORSO / BELLY POKE!
+    triggerExpression('cold_sweat');
+    if (lifeEngine) {
+      lifeEngine.touchRecoil = 7.0;
+    }
+
+    const pokeLines = [
+      "Kyaa! That tickles, Master! No poking there! [cold_sweat]",
+      "Fufu, are you trying to distract me from my walk, Master? [smug]",
+      "Eep! That surprised me! Careful, Master! [cold_sweat]"
+    ];
+    const line = pokeLines[Math.floor(Math.random() * pokeLines.length)];
+    showDialogue(line);
+    speakText(line);
+  }
+}
 
 // ==========================================
-// 7. Expressions & Motions Controller
+// 6. Expressions & Motions Controller
 // ==========================================
 function triggerExpression(expName) {
-  if (currentEngineMode === '3d' && currentVrm && currentVrm.expressionManager) {
-    const mgr = currentVrm.expressionManager;
-    mgr.setValue('happy', 0);
-    mgr.setValue('angry', 0);
-    mgr.setValue('sorrow', 0);
-    mgr.setValue('relaxed', 0);
-    mgr.setValue('surprised', 0);
-
-    switch (expName) {
-      case 'happy':
-      case 'blush':
-      case 'heart_eyes':
-        mgr.setValue('happy', 1.0);
-        break;
-      case 'smug':
-      case 'glasses':
-        mgr.setValue('relaxed', 1.0);
-        break;
-      case 'crying':
-      case 'cold_sweat':
-        mgr.setValue('sorrow', 1.0);
-        break;
-      case 'surprised':
-        mgr.setValue('surprised', 1.0);
-        break;
-      default:
-        break;
+  if (!live2dModel) return;
+  try {
+    if (expName === 'reset') {
+      if (live2dModel.internalModel && live2dModel.internalModel.motionManager) {
+        live2dModel.internalModel.motionManager.expressionManager?.resetExpression();
+      }
+      return;
     }
+    console.log('Triggering expression:', expName);
+    live2dModel.expression(expName);
+  } catch (e) {
+    console.warn(`Expression ${expName} error:`, e);
+  }
+}
+
+function triggerMotion(groupName) {
+  if (!live2dModel) return;
+  try {
+    console.log('Triggering motion:', groupName);
+    live2dModel.motion(groupName);
+  } catch (e) {
+    console.warn(`Motion ${groupName} error:`, e);
   }
 }
 
 // ==========================================
-// 8. Audio Player & Natural Lip-Sync
+// 7. Audio Player & Natural Cadence Lip-Sync
 // ==========================================
-let currentAudio = null;
-
 async function speakText(text) {
-  try {
-    // Strip emotion brackets
-    const cleanText = text.replace(/\[.*?\]/g, '').trim();
-    if (!cleanText) return;
+  if (!text || !text.trim()) return;
 
+  try {
     if (currentAudio) {
       currentAudio.pause();
       currentAudio = null;
     }
 
-    const res = await fetch(`${API_BASE}/api/tts`, {
+    isSpeaking = true;
+    audioWave.classList.remove('hidden');
+
+    const res = await fetch(`${BACKEND_URL}/api/tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: cleanText,
-        voice: serverConfig.voice || 'ja-JP-NanamiNeural',
-        pitch: serverConfig.voice_pitch || '+4Hz',
-        rate: serverConfig.voice_rate || '+0%'
+        text: text,
+        voice: config.voice,
+        rate: config.rate,
+        pitch: config.pitch
       })
     });
 
-    if (!res.ok) throw new Error('TTS synthesis failed');
+    if (!res.ok) {
+      throw new Error(await res.text());
+    }
 
     const blob = await res.blob();
     const audioUrl = URL.createObjectURL(blob);
     currentAudio = new Audio(audioUrl);
 
-    // Setup Web Audio Analyser for accurate 3D lip-sync
     if (!audioContext) {
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
     }
@@ -991,146 +859,175 @@ async function speakText(text) {
     }
 
     const source = audioContext.createMediaElementSource(currentAudio);
-    audioAnalyser = audioContext.createAnalyser();
-    audioAnalyser.fftSize = 256;
-    source.connect(audioAnalyser);
-    audioAnalyser.connect(audioContext.destination);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.5;
+    source.connect(analyser);
+    analyser.connect(audioContext.destination);
 
-    const freqData = new Uint8Array(audioAnalyser.frequencyBinCount);
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-    function trackEnergy() {
-      if (!isAudioPlaying) return;
-      audioAnalyser.getByteFrequencyData(freqData);
-      let sum = 0;
-      for (let i = 0; i < freqData.length; i++) sum += freqData[i];
-      const avg = sum / freqData.length;
-      const energy = Math.min(1.0, avg / 128.0);
-
-      if (vrmLifeEngine) {
-        vrmLifeEngine.speakingEnergy = energy;
+    function syncMouth() {
+      if (!isSpeaking || !currentAudio || currentAudio.paused) {
+        if (lifeEngine) {
+          lifeEngine.mouthOpen = 0;
+          lifeEngine.speakingEnergy = 0;
+        }
+        return;
       }
-      requestAnimationFrame(trackEnergy);
+
+      analyser.getByteFrequencyData(dataArray);
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i];
+      }
+      const avg = sum / dataArray.length;
+      const energy = Math.min(1.0, avg / 110.0);
+
+      if (lifeEngine) {
+        lifeEngine.speakingEnergy = energy;
+        lifeEngine.mouthOpen = Math.min(1.0, energy * 1.8);
+      }
+
+      requestAnimationFrame(syncMouth);
     }
 
     currentAudio.onplay = () => {
-      isAudioPlaying = true;
-      if (audioWave) audioWave.classList.remove('hidden');
-      trackEnergy();
+      requestAnimationFrame(syncMouth);
     };
 
     currentAudio.onended = () => {
-      isAudioPlaying = false;
-      if (audioWave) audioWave.classList.add('hidden');
-      if (vrmLifeEngine) vrmLifeEngine.speakingEnergy = 0;
-      URL.revokeObjectURL(audioUrl);
-    };
-
-    currentAudio.onerror = () => {
-      isAudioPlaying = false;
-      if (audioWave) audioWave.classList.add('hidden');
-      if (vrmLifeEngine) vrmLifeEngine.speakingEnergy = 0;
+      isSpeaking = false;
+      audioWave.classList.add('hidden');
+      if (lifeEngine) {
+        lifeEngine.mouthOpen = 0;
+        lifeEngine.speakingEnergy = 0;
+      }
+      setTimeout(() => {
+        if (!isSpeaking) hideDialogue();
+      }, 7000);
     };
 
     await currentAudio.play();
+
   } catch (err) {
-    console.warn('TTS playback issue:', err);
-    isAudioPlaying = false;
-    if (audioWave) audioWave.classList.add('hidden');
+    console.error('Speech error:', err);
+    isSpeaking = false;
+    audioWave.classList.add('hidden');
   }
 }
 
 // ==========================================
-// 9. Dialogue Box & Typewriter Animation
+// 8. Dialogue Box & Typewriter Animation
 // ==========================================
-let typewriterTimer = null;
-let dialogueHideTimer = null;
-
+let typeTimer = null;
 function showDialogue(text) {
-  if (!dialogueBox || !dialogueText) return;
-
   dialogueBox.classList.remove('hidden');
-  if (vrmLifeEngine) vrmLifeEngine.updateDialogueBubblePosition();
-
-  // Parse emotion tag: e.g. [blush]
-  const match = text.match(/\[([a-zA-Z0-9_]+)\]/);
-  if (match) {
-    triggerExpression(match[1]);
-  }
-
-  // Typewriter animation
-  if (typewriterTimer) clearInterval(typewriterTimer);
   dialogueText.textContent = '';
-  let i = 0;
+  
+  if (typeTimer) clearInterval(typeTimer);
 
-  typewriterTimer = setInterval(() => {
-    if (i < text.length) {
-      dialogueText.textContent += text[i];
-      i++;
+  let index = 0;
+  typeTimer = setInterval(() => {
+    if (index < text.length) {
+      dialogueText.textContent += text.charAt(index);
+      index++;
     } else {
-      clearInterval(typewriterTimer);
-      typewriterTimer = null;
+      clearInterval(typeTimer);
     }
   }, 22);
 
-  // Auto-hide after reading duration
-  if (dialogueHideTimer) clearTimeout(dialogueHideTimer);
-  const displayDuration = Math.max(5000, text.length * 90);
-  dialogueHideTimer = setTimeout(() => {
-    dialogueBox.classList.add('hidden');
-  }, displayDuration);
+  updateDialoguePosition();
+}
+
+function hideDialogue() {
+  dialogueBox.classList.add('hidden');
 }
 
 // ==========================================
-// 10. Chat Interaction Loop (Groq LLM)
+// 9. Chat Interaction Loop (Groq LLM)
 // ==========================================
-async function sendChatMessage(userText) {
-  if (!userText || !userText.trim()) return;
-  chatInput.value = '';
+async function sendMessage(userMsg) {
+  const msg = (userMsg || chatInput.value).trim();
+  if (!msg) return;
 
-  showDialogue(`...`);
-  if (vrmLifeEngine) {
-    vrmLifeEngine.state = PET_STATES.IDLE;
+  if (!config.groqKey) {
+    showDialogue("Master, please put your Groq API Key into .env, config.json, or Settings (⚙️)!");
+    openSettingsModal();
+    return;
   }
 
+  // Wake up if sleeping
+  if (lifeEngine && lifeEngine.state === PET_STATES.SLEEP) {
+    lifeEngine.wakeUp();
+  }
+
+  chatInput.value = '';
+  showDialogue(`Master: "${msg}"`);
+
+  if (lifeEngine) lifeEngine.isThinking = true;
+
+  conversationHistory.push({ role: 'user', content: msg });
+
   try {
-    const res = await fetch(`${API_BASE}/api/chat`, {
+    const res = await fetch(`${BACKEND_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: userText,
-        model: serverConfig.groq_model || 'qwen/qwen3.8-27b'
+        message: msg,
+        history: conversationHistory,
+        api_key: config.groqKey,
+        model: config.groqModel || 'qwen/qwen3.8-27b'
       })
     });
 
+    if (lifeEngine) lifeEngine.isThinking = false;
+
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.detail || 'Failed to get response from Groq');
+      const errData = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(errData.detail || 'Chat request failed');
     }
 
     const data = await res.json();
-    const reply = data.reply || 'Hehe, I heard you, Master!';
+    console.log('Groq reply:', data);
 
-    showDialogue(reply);
-    speakText(reply);
+    conversationHistory.push({ role: 'assistant', content: data.reply });
+
+    if (data.emotions && data.emotions.length > 0) {
+      triggerExpression(data.emotions[0]);
+    }
+
+    if (data.motions && data.motions.length > 0) {
+      const motionName = data.motions[0].charAt(0).toUpperCase() + data.motions[0].slice(1);
+      triggerMotion(motionName);
+    }
+
+    showDialogue(data.clean_text);
+    speakText(data.clean_text);
 
   } catch (err) {
+    if (lifeEngine) lifeEngine.isThinking = false;
     console.error('Chat error:', err);
-    showDialogue(`[crying] Gomen ne Master... ${err.message}`);
+    showDialogue(`Eep! ${err.message}`);
   }
 }
 
 // ==========================================
-// 11. Voice Chat (Mic & Whisper STT)
+// 10. Voice Chat (Mic & Whisper STT)
 // ==========================================
-let mediaRecorder = null;
-let audioChunks = [];
-let isRecording = false;
+async function toggleVoiceRecording() {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+}
 
-async function startVoiceRecording() {
+async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream);
     audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) audioChunks.push(e.data);
@@ -1138,183 +1035,206 @@ async function startVoiceRecording() {
 
     mediaRecorder.onstop = async () => {
       const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-      stream.getTracks().forEach((t) => t.stop());
-      await processSpeechToText(audioBlob);
+      await processVoiceInput(audioBlob);
+      stream.getTracks().forEach(t => t.stop());
     };
 
     mediaRecorder.start();
     isRecording = true;
-    if (btnMic) btnMic.classList.add('recording');
-    showDialogue('Listening to you, Master... [heart_eyes]');
+    btnMic.classList.add('recording');
+    showDialogue("Listening to you, Master... (Speak now!) 🎙️");
   } catch (err) {
-    console.error('Mic access error:', err);
-    showDialogue('Could not access microphone: ' + err.message);
+    console.error('Microphone error:', err);
+    showDialogue("Microphone permission denied or not available!");
   }
 }
 
-function stopVoiceRecording() {
+function stopRecording() {
   if (mediaRecorder && isRecording) {
     mediaRecorder.stop();
     isRecording = false;
-    if (btnMic) btnMic.classList.remove('recording');
+    btnMic.classList.remove('recording');
+    showDialogue("Thinking... ✨");
+    if (lifeEngine) lifeEngine.isThinking = true;
   }
 }
 
-async function processSpeechToText(blob) {
-  showDialogue('Thinking... [glasses]');
-  try {
-    const formData = new FormData();
-    formData.append('file', blob, 'speech.webm');
+async function processVoiceInput(blob) {
+  if (!config.groqKey) {
+    showDialogue("Groq API Key is required for speech recognition!");
+    return;
+  }
 
-    const res = await fetch(`${API_BASE}/api/stt`, {
+  const formData = new FormData();
+  formData.append('audio', blob, 'recording.webm');
+  formData.append('api_key', config.groqKey);
+  formData.append('model', 'whisper-large-v3-turbo');
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/stt`, {
       method: 'POST',
       body: formData
     });
 
-    if (!res.ok) throw new Error('Speech recognition failed');
+    if (!res.ok) {
+      throw new Error(await res.text());
+    }
 
     const data = await res.json();
-    const transcribed = (data.text || '').trim();
-    if (transcribed) {
-      await sendChatMessage(transcribed);
+    if (data.text) {
+      sendMessage(data.text);
     } else {
-      showDialogue("Master, I couldn't hear clearly. Could you say that again? [surprised]");
+      if (lifeEngine) lifeEngine.isThinking = false;
+      showDialogue("I didn't catch that, Master. Try speaking again?");
     }
   } catch (err) {
+    if (lifeEngine) lifeEngine.isThinking = false;
     console.error('STT error:', err);
-    showDialogue('Speech recognition error: ' + err.message);
+    showDialogue("STT failed: " + err.message);
   }
 }
 
 // ==========================================
-// 12. Event Listeners & UI Controls
+// 11. Event Listeners & Roaming Toggle
 // ==========================================
-function setupUIEvents() {
-  // Chat input
-  if (btnSend) {
-    btnSend.addEventListener('click', () => sendChatMessage(chatInput.value));
-  }
-  if (chatInput) {
-    chatInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') sendChatMessage(chatInput.value);
-    });
-  }
+btnSend.addEventListener('click', () => sendMessage());
+chatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendMessage();
+});
 
-  // Mic button
-  if (btnMic) {
-    btnMic.addEventListener('click', () => {
-      if (isRecording) stopVoiceRecording();
-      else startVoiceRecording();
-    });
-  }
+btnMic.addEventListener('click', toggleVoiceRecording);
 
-  // Expression buttons
-  expButtons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const exp = btn.getAttribute('data-exp');
-      triggerExpression(exp);
-    });
+document.querySelectorAll('.exp-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const exp = btn.getAttribute('data-exp');
+    triggerExpression(exp);
   });
+});
 
-  // Dock Toggle
-  if (btnToggleDock && dockInner && dockChevron) {
-    btnToggleDock.addEventListener('click', () => {
-      dockInner.classList.toggle('hidden');
-      dockChevron.textContent = dockInner.classList.contains('hidden') ? '▲' : '▼';
-    });
+btnToggleDock.addEventListener('click', () => {
+  chatDock.classList.toggle('collapsed');
+  dockChevron.textContent = chatDock.classList.contains('collapsed') ? '▲' : '▼';
+});
+
+// Roaming Toggle
+btnRoam.addEventListener('click', () => {
+  roamEnabled = !roamEnabled;
+  btnRoam.classList.toggle('active', roamEnabled);
+  if (roamEnabled) {
+    showDialogue("Roam mode ON! I'm exploring your desktop! 🐾");
+    if (lifeEngine) lifeEngine.pickNextState();
+  } else {
+    showDialogue("Sitting still right here with Master! ✨");
+    if (lifeEngine) lifeEngine.state = PET_STATES.IDLE;
+  }
+});
+
+document.getElementById('btn-close').addEventListener('click', () => {
+  ipcRenderer.send('window-close');
+});
+
+document.getElementById('btn-min').addEventListener('click', () => {
+  ipcRenderer.send('window-minimize');
+});
+
+const btnPin = document.getElementById('btn-pin');
+btnPin.addEventListener('click', () => {
+  config.isPinned = !config.isPinned;
+  btnPin.classList.toggle('active', config.isPinned);
+  ipcRenderer.send('window-toggle-top', config.isPinned);
+});
+
+// Settings Elements
+const btnSettings = document.getElementById('btn-settings');
+const btnCloseSettings = document.getElementById('btn-close-settings');
+const btnSaveSettings = document.getElementById('btn-save-settings');
+
+const cfgGroqKey = document.getElementById('cfg-groq-key');
+const cfgGroqModel = document.getElementById('cfg-groq-model');
+const cfgVoice = document.getElementById('cfg-voice');
+const cfgPitch = document.getElementById('cfg-pitch');
+const cfgRate = document.getElementById('cfg-rate');
+const pitchVal = document.getElementById('pitch-val');
+const rateVal = document.getElementById('rate-val');
+
+async function openSettingsModal() {
+  cfgGroqKey.value = config.groqKey;
+  cfgVoice.value = config.voice;
+  cfgPitch.value = parseInt(config.pitch) || 4;
+  cfgRate.value = parseInt(config.rate) || 0;
+  pitchVal.textContent = `${cfgPitch.value > 0 ? '+' : ''}${cfgPitch.value}Hz`;
+  rateVal.textContent = `${cfgRate.value > 0 ? '+' : ''}${cfgRate.value}%`;
+
+  try {
+    const url = config.groqKey ? `${BACKEND_URL}/api/models?api_key=${encodeURIComponent(config.groqKey)}` : `${BACKEND_URL}/api/models`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      cfgGroqModel.innerHTML = '';
+      data.models.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name || m.id;
+        if (m.id === config.groqModel) opt.selected = true;
+        cfgGroqModel.appendChild(opt);
+      });
+    }
+  } catch (e) {
+    console.warn('Could not load models list:', e);
   }
 
-  // Roam Mode Toggle
-  if (btnRoam) {
-    btnRoam.addEventListener('click', () => {
-      isRoamingEnabled = !isRoamingEnabled;
-      btnRoam.classList.toggle('active', isRoamingEnabled);
-      if (isRoamingEnabled) {
-        showDialogue('Yay! Roam mode enabled! Watch me explore your desktop! [heart_eyes]');
-      } else {
-        showDialogue('Anchored in place! I will stay right here for you, Master! [relaxed]');
-      }
-    });
-  }
-
-  // 3D / 2D Engine Switcher
-  if (btnMode) {
-    btnMode.addEventListener('click', () => {
-      const nextMode = currentEngineMode === '3d' ? '2d' : '3d';
-      switchEngineMode(nextMode);
-    });
-  }
-
-  // Window Top Bar Controls
-  if (btnMin) {
-    btnMin.addEventListener('click', () => ipcRenderer.send('window-minimize'));
-  }
-  if (btnClose) {
-    btnClose.addEventListener('click', () => ipcRenderer.send('window-close'));
-  }
-  if (btnPin) {
-    let isPinned = true;
-    btnPin.addEventListener('click', () => {
-      isPinned = !isPinned;
-      btnPin.classList.toggle('active', isPinned);
-      ipcRenderer.send('window-toggle-top', isPinned);
-    });
-  }
-
-  // Settings Modal
-  if (btnSettings && settingsModal) {
-    btnSettings.addEventListener('click', () => settingsModal.classList.remove('hidden'));
-  }
-  if (btnCloseSettings && settingsModal) {
-    btnCloseSettings.addEventListener('click', () => settingsModal.classList.add('hidden'));
-  }
-  if (cfgPitch && pitchVal) {
-    cfgPitch.addEventListener('input', () => {
-      pitchVal.textContent = `${cfgPitch.value > 0 ? '+' : ''}${cfgPitch.value}Hz`;
-    });
-  }
-  if (cfgRate && rateVal) {
-    cfgRate.addEventListener('input', () => {
-      rateVal.textContent = `${cfgRate.value > 0 ? '+' : ''}${cfgRate.value}%`;
-    });
-  }
-
-  if (btnSaveSettings) {
-    btnSaveSettings.addEventListener('click', async () => {
-      const updateData = {
-        groq_model: cfgGroqModel ? cfgGroqModel.value : 'qwen/qwen3.8-27b',
-        voice: cfgVoice ? cfgVoice.value : 'ja-JP-NanamiNeural',
-        voice_pitch: `${cfgPitch.value > 0 ? '+' : ''}${cfgPitch.value}Hz`,
-        voice_rate: `${cfgRate.value > 0 ? '+' : ''}${cfgRate.value}%`
-      };
-      if (cfgGroqKey && cfgGroqKey.value.trim()) {
-        updateData.groq_api_key = cfgGroqKey.value.trim();
-      }
-
-      try {
-        const res = await fetch(`${API_BASE}/api/config`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updateData)
-        });
-        if (res.ok) {
-          serverConfig = await res.json();
-          if (settingsModal) settingsModal.classList.add('hidden');
-          showDialogue('Settings saved successfully! [happy]');
-        }
-      } catch (err) {
-        alert('Failed to save settings: ' + err.message);
-      }
-    });
-  }
+  settingsModal.classList.remove('hidden');
 }
 
-// ==========================================
-// 13. Application Initialization
-// ==========================================
+btnSettings.addEventListener('click', openSettingsModal);
+btnCloseSettings.addEventListener('click', () => {
+  settingsModal.classList.add('hidden');
+});
+
+cfgPitch.addEventListener('input', () => {
+  pitchVal.textContent = `${cfgPitch.value > 0 ? '+' : ''}${cfgPitch.value}Hz`;
+});
+
+cfgRate.addEventListener('input', () => {
+  rateVal.textContent = `${cfgRate.value > 0 ? '+' : ''}${cfgRate.value}%`;
+});
+
+btnSaveSettings.addEventListener('click', async () => {
+  config.groqKey = cfgGroqKey.value.trim();
+  config.groqModel = cfgGroqModel.value;
+  config.voice = cfgVoice.value;
+  config.pitch = `${cfgPitch.value > 0 ? '+' : ''}${cfgPitch.value}Hz`;
+  config.rate = `${cfgRate.value > 0 ? '+' : ''}${cfgRate.value}%`;
+
+  try {
+    await fetch(`${BACKEND_URL}/api/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        groq_api_key: config.groqKey,
+        groq_model: config.groqModel,
+        tts_voice: config.voice,
+        tts_pitch: config.pitch,
+        tts_rate: config.rate
+      })
+    });
+  } catch (e) {
+    console.warn('Failed to save config to server:', e);
+  }
+
+  localStorage.setItem('groq_key', config.groqKey);
+  localStorage.setItem('groq_model', config.groqModel);
+  localStorage.setItem('tts_voice', config.voice);
+  localStorage.setItem('tts_pitch', config.pitch);
+  localStorage.setItem('tts_rate', config.rate);
+
+  settingsModal.classList.add('hidden');
+  showDialogue("Settings saved permanently, Master! ✨");
+  triggerExpression('blush');
+});
+
+// App Startup
 window.addEventListener('DOMContentLoaded', async () => {
-  setupUIEvents();
-  await loadServerConfig();
-  // Start with 3D VTuber Engine as default
-  await init3DVTuber();
+  await syncConfigFromServer();
+  await initLive2D();
 });

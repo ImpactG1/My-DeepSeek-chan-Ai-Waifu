@@ -17,9 +17,5 @@
   "description": "Interactive Live2D AI Waifu Desktop Companion",
   "devDependencies": {
     "electron": "^41.7.1"
-  },
-  "dependencies": {
-    "@pixiv/three-vrm": "^3.5.5",
-    "three": "^0.187.0"
   }
 }

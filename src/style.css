@@ -23,7 +23,7 @@ body, html {
 }
 
 /* Make UI components interactive */
-#drag-bar, #dialogue-box, #chat-dock, .modal, #live2d-canvas, #waifu-canvas {
+#drag-bar, #dialogue-box, #chat-dock, .modal, #live2d-canvas {
   pointer-events: auto;
 }
 
@@ -104,8 +104,8 @@ body, html {
   color: #ffffff;
 }
 
-/* ================= Desktop Canvas (3D & 2D) ================= */
-#live2d-canvas, #waifu-canvas {
+/* ================= Live2D Desktop Canvas ================= */
+#live2d-canvas {
   position: absolute;
   top: 0;
   left: 0;
@@ -118,7 +118,7 @@ body, html {
   transition: filter 0.3s ease;
 }
 
-#live2d-canvas:active, #waifu-canvas:active {
+#live2d-canvas:active {
   cursor: grabbing;
 }
 
