@@ -88,6 +88,8 @@ class DesktopLifeEngine {
     this.groundY = window.innerHeight - 440;
     this.baseScale = 0.42;
     this.facing = 1; // 1 = right, -1 = left
+    this.scaleFacing = 1;
+    this.targetScaleFacing = 1;
 
     // Pet State Machine
     this.state = PET_STATES.IDLE;
@@ -250,7 +252,7 @@ class DesktopLifeEngine {
 
     switch (this.state) {
       case PET_STATES.IDLE:
-        // Standing and breathing
+        // Standing and breathing with gentle posture recovery
         this.model.y += (this.groundY - this.model.y) * (dt * 6.0);
         this.targetLean = 0;
 
@@ -260,45 +262,60 @@ class DesktopLifeEngine {
         break;
 
       case PET_STATES.WALK:
-        this.walkCycle += dt * 6.5;
+        this.walkCycle += dt * 5.2; // Natural bipedal cadence
         const dx = this.targetX - this.model.x;
         const dist = Math.abs(dx);
 
-        if (dist > 12) {
+        if (dist > 14) {
           const moveDir = dx > 0 ? 1 : -1;
           this.facing = moveDir;
-          this.model.scale.x = Math.abs(this.baseScale) * this.facing;
+          this.targetScaleFacing = this.facing;
           this.model.x += moveDir * this.moveSpeed * dt;
+          this.targetLean = -6.0; // Purposeful forward walking posture
 
-          // Cute walking step bounce
-          this.model.y = this.groundY + Math.abs(Math.sin(this.walkCycle * 2)) * -9;
+          // Step double-bounce on desktop
+          const stepBounce = Math.abs(Math.sin(this.walkCycle * 2.0));
+          this.model.y = this.groundY - stepBounce * 8.5;
         } else {
-          // Reached destination!
-          this.state = Math.random() < 0.4 ? PET_STATES.HOP : PET_STATES.IDLE;
-          this.stateTimer = 0;
-          this.stateDuration = 4.0 + Math.random() * 6.0;
+          // Reached destination! Choose next behavior
+          const rand = Math.random();
+          if (rand < 0.35) {
+            this.state = PET_STATES.HOP;
+            this.hopPhase = 0;
+            this.stateTimer = 0;
+            this.stateDuration = 2.0;
+          } else if (rand < 0.65) {
+            this.state = PET_STATES.SIT;
+            this.stateTimer = 0;
+            this.stateDuration = 12.0 + Math.random() * 15.0;
+          } else {
+            this.state = PET_STATES.IDLE;
+            this.stateTimer = 0;
+            this.stateDuration = 4.0 + Math.random() * 5.0;
+          }
         }
         break;
 
       case PET_STATES.RUN:
-        this.walkCycle += dt * 11.0;
+        this.walkCycle += dt * 9.5; // High-cadence sprint
         const rdx = this.targetX - this.model.x;
         const rdist = Math.abs(rdx);
 
-        if (rdist > 16) {
+        if (rdist > 18) {
           const rDir = rdx > 0 ? 1 : -1;
           this.facing = rDir;
-          this.model.scale.x = Math.abs(this.baseScale) * this.facing;
-          this.model.x += rDir * (this.moveSpeed * 2.2) * dt;
-          this.targetLean = 0.85;
+          this.targetScaleFacing = this.facing;
+          this.model.x += rDir * (this.moveSpeed * 2.1) * dt;
+          this.targetLean = -24.0; // Deep athletic forward lean!
 
-          // Energetic run bounce
-          this.model.y = this.groundY + Math.abs(Math.sin(this.walkCycle * 2)) * -16;
+          // Energetic vertical bounce
+          const runBounce = Math.abs(Math.sin(this.walkCycle * 2.0));
+          this.model.y = this.groundY - runBounce * 16.0;
         } else {
           this.targetLean = 0;
           this.state = PET_STATES.IDLE;
           this.stateTimer = 0;
-          this.stateDuration = 5.0;
+          this.stateDuration = 4.0;
         }
         break;
 
@@ -307,17 +324,18 @@ class DesktopLifeEngine {
         break;
 
       case PET_STATES.SIT:
-        // Lowers down to sit on taskbar
+        // Lowers gracefully onto taskbar
         const sitY = this.groundY + 36;
         this.model.y += (sitY - this.model.y) * (dt * 5.0);
+        this.targetLean = -14.0; // Comfortable forward folded posture
 
         if (this.stateTimer >= this.stateDuration && !isSpeaking) {
-          if (Math.random() < 0.45) {
-            // Falls asleep!
+          if (Math.random() < 0.42) {
+            // Falls peacefully asleep!
             this.state = PET_STATES.SLEEP;
             this.stateTimer = 0;
-            this.stateDuration = 25.0 + Math.random() * 30.0;
-            showDialogue("DeepSeek-chan is napping peacefully... zZz");
+            this.stateDuration = 22.0 + Math.random() * 26.0;
+            showDialogue("DeepSeek-chan is napping peacefully on the taskbar... zZz");
           } else {
             // Stands back up
             this.state = PET_STATES.IDLE;
@@ -328,15 +346,20 @@ class DesktopLifeEngine {
         break;
 
       case PET_STATES.SLEEP:
-        // Napping peacefully
+        // Peaceful snooze curled up on taskbar
         const sleepY = this.groundY + 36;
         this.model.y += (sleepY - this.model.y) * (dt * 4.0);
+        this.targetLean = -16.0;
 
         if (this.stateTimer >= this.stateDuration || isSpeaking) {
           this.wakeUp();
         }
         break;
     }
+
+    // Smooth horizontal turning flip interpolation
+    this.scaleFacing += (this.targetScaleFacing - this.scaleFacing) * Math.min(1.0, dt * 9.0);
+    this.model.scale.set(Math.abs(this.baseScale) * this.scaleFacing, this.baseScale);
   }
 
   pickNextState() {
@@ -344,15 +367,15 @@ class DesktopLifeEngine {
     const rand = Math.random();
 
     if (rand < 0.45) {
-      // Walk somewhere
+      // Walk somewhere along desktop
       this.state = PET_STATES.WALK;
       this.targetX = 100 + Math.random() * (window.innerWidth - 280);
-      this.moveSpeed = 85 + Math.random() * 25;
+      this.moveSpeed = 80 + Math.random() * 25;
       this.stateDuration = 12.0;
     } else if (rand < 0.65) {
-      // Sit down
+      // Sit on taskbar
       this.state = PET_STATES.SIT;
-      this.stateDuration = 14.0 + Math.random() * 20.0;
+      this.stateDuration = 12.0 + Math.random() * 18.0;
     } else if (rand < 0.85) {
       // Hop joyfully
       this.state = PET_STATES.HOP;
@@ -360,7 +383,7 @@ class DesktopLifeEngine {
       this.hopVY = 0;
       this.stateDuration = 2.0;
     } else {
-      // Playful run
+      // Playful sprint
       this.state = PET_STATES.RUN;
       this.targetX = 120 + Math.random() * (window.innerWidth - 300);
       this.stateDuration = 8.0;
@@ -369,26 +392,32 @@ class DesktopLifeEngine {
 
   handleHopState(dt) {
     if (this.hopPhase === 0) {
-      // Crouch windup
-      this.model.y += ((this.groundY + 12) - this.model.y) * (dt * 15.0);
-      if (this.stateTimer > 0.18) {
+      // 1. Crouch windup (anticipation)
+      const crouchY = this.groundY + 16.0;
+      this.model.y += (crouchY - this.model.y) * (dt * 18.0);
+      this.targetLean = -18.0;
+      if (this.stateTimer > 0.20) {
         this.hopPhase = 1;
-        this.hopVY = -15.5; // Launch!
+        this.hopVY = -16.0; // Launch upward!
+        this.stateTimer = 0;
       }
     } else if (this.hopPhase === 1) {
-      // Airborne
-      this.hopVY += 34.0 * dt; // Gravity
+      // 2. Airborne parabolic arc
+      this.hopVY += 36.0 * dt; // Gravity
       this.model.y += this.hopVY;
-      this.model.x += this.facing * 35.0 * dt;
+      this.model.x += this.facing * 40.0 * dt;
+      this.targetLean = -5.0;
 
       if (this.model.y >= this.groundY) {
         this.model.y = this.groundY;
-        this.hopPhase = 2;
+        this.hopPhase = 2; // Impact touchdown
         this.stateTimer = 0;
       }
     } else if (this.hopPhase === 2) {
-      // Land squash recovery
-      if (this.stateTimer > 0.15) {
+      // 3. Landing shock absorption & squash recovery
+      const landY = this.groundY + 12.0;
+      this.model.y += (landY - this.model.y) * (dt * 16.0);
+      if (this.stateTimer > 0.16) {
         this.state = PET_STATES.IDLE;
         this.stateTimer = 0;
         this.stateDuration = 4.0;
@@ -410,9 +439,9 @@ class DesktopLifeEngine {
 
     if (isSleeping) {
       // Head nods down in deep sleep
-      this.targetAngleX = 0;
-      this.targetAngleY = -22.0;
-      this.targetAngleZ = 12.0 * this.facing;
+      this.targetAngleX = 4.0 * this.facing;
+      this.targetAngleY = -20.0;
+      this.targetAngleZ = 16.0 * this.facing;
       return;
     }
 
@@ -424,10 +453,10 @@ class DesktopLifeEngine {
     }
 
     if (this.state === PET_STATES.WALK || this.state === PET_STATES.RUN) {
-      // Look in walking direction
+      // Look in walking direction with step cadence bob
       this.targetAngleX = 14.0 * this.facing;
       this.targetAngleY = 2.0;
-      this.targetAngleZ = Math.sin(this.walkCycle * 2) * -5.0 * this.facing;
+      this.targetAngleZ = Math.sin(this.walkCycle * 2.0) * -5.0 * this.facing;
       return;
     }
 
@@ -457,7 +486,7 @@ class DesktopLifeEngine {
       try { core.setParameterValueById(id, val); } catch (e) {}
     };
 
-    // 3D Angles
+    // 1. Head & Facial 3D Orientation
     set('AngleX', this.angleX);
     set('AngleY', this.angleY);
     set('AngleZ', this.angleZ);
@@ -465,70 +494,202 @@ class DesktopLifeEngine {
     set('ParamAngleY', this.angleY);
     set('ParamAngleZ', this.angleZ);
 
-    // 3D Torso Parallax
-    set('ParamBodyAngleX', this.bodyX * 0.5);
-    set('ParamBodyAngleY', this.bodyY * 0.4);
-    set('ParamBodyAngleZ', this.bodyZ);
-
-    // Volumetric Body Position Shift
-    set('PositionX', -this.angleX * 0.12 + this.bodyX * 0.08);
-    set('PositionY', this.bodyY * 0.08);
-    set('PositionZ', this.bodyZ * 0.1 - this.touchRecoil);
-
-    // Breathing & Shoulders
+    // 2. Diaphragmatic Breathing
     set('ParamBreath', totalBreath);
-    set('ShoulderY', totalBreath * 0.35);
 
-    // Gaze & Pupils
+    // 3. Multi-Axis Locomotion Kinematics
+    const isWalking = this.state === PET_STATES.WALK;
+    const isRunning = this.state === PET_STATES.RUN;
+    const isHopping = this.state === PET_STATES.HOP;
+    const isSitting = this.state === PET_STATES.SIT;
+
+    if (isWalking || isRunning) {
+      const phase = this.walkCycle;
+      const twoPhase = phase * 2.0;
+      const intensity = isRunning ? 1.6 : 1.0;
+
+      // Pelvis (Hips) Weight-Shifting Kinematics
+      const hipTilt = Math.sin(phase) * (14.0 * intensity) * this.facing;
+      const hipTwist = Math.cos(phase) * (6.0 * intensity);
+      const hipDip = -Math.abs(Math.sin(twoPhase)) * (8.0 * intensity);
+      set('HipAngleZ', hipTilt);
+      set('HipAngleX', hipTwist);
+      set('HipAngleY', hipDip);
+      set('ParamHipAngleZ', hipTilt * 0.7);
+      set('HipZ1', hipTilt * 0.5);
+
+      // Shoulders Counter-Opposition (Dips opposite to hip for human balance!)
+      const shoulderTilt = -Math.sin(phase) * (10.0 * intensity) * this.facing;
+      const shoulderDip = Math.sin(twoPhase) * (4.0 * intensity) + totalBreath * 0.3;
+      set('ShoulderZ', shoulderTilt);
+      set('ShoulderY', shoulderDip);
+
+      // Arms & Forearms Stride Opposition (Left arm swings with right leg!)
+      const armSwing = Math.sin(phase) * (16.0 * intensity);
+      set('LArm', armSwing * this.facing);
+      set('RArm', -armSwing * this.facing);
+      set('LForearm', Math.max(0, armSwing * 0.6) + (isRunning ? 14.0 : 4.0));
+      set('RForearm', Math.max(0, -armSwing * 0.6) + (isRunning ? 14.0 : 4.0));
+      set('LWrist', Math.cos(phase) * 8.0);
+      set('RWrist', -Math.cos(phase) * 8.0);
+
+      // Torso & Chest Counter-Twist
+      const torsoTilt = -Math.sin(phase) * (8.0 * intensity) * this.facing;
+      set('ParamBodyAngleZ', torsoTilt);
+      set('ParamBodyAngleX', Math.sin(phase) * (5.0 * intensity) * this.facing);
+      set('ParamBodyAngleY', hipDip * 0.4);
+
+      // Volumetric Body 3D Shift
+      set('PositionX', Math.sin(phase) * (2.5 * intensity) * this.facing);
+      set('PositionY', hipDip * 0.5);
+      set('PositionZ', -this.touchRecoil);
+
+      // Leg Stride & Stance Width
+      set('LEGAngleZ2', Math.sin(phase) * (18.0 * intensity) * this.facing);
+      set('Param33', Math.abs(Math.sin(twoPhase)) * 0.35);
+
+      // Skirt Cloth Aerodynamics (Lagging 90 degrees behind hips!)
+      const skirtPhase = Math.cos(phase);
+      const skirtFlutter = Math.sin(twoPhase);
+      set('SkirtX1', skirtPhase * (12.0 * intensity) * this.facing);
+      set('SkirtX2', skirtPhase * (15.0 * intensity) * this.facing);
+      set('SkirtX3', skirtPhase * (18.0 * intensity) * this.facing);
+      set('SkirtX4', skirtPhase * (20.0 * intensity) * this.facing);
+      set('SkirtY', skirtFlutter * (8.0 * intensity));
+      set('SkirtY2', skirtFlutter * (10.0 * intensity));
+      set('SkirtY3', skirtFlutter * (12.0 * intensity));
+      set('SkirtLayerX1', skirtPhase * 8.0);
+      set('SkirtLayerX2', skirtPhase * 10.0);
+      set('SkirtLayerY1', skirtFlutter * 6.0);
+
+      // 6-Segment Whale Tail Wave Propagation (Progressive Phase Delay!)
+      const tailSpeed = isRunning ? 2.2 : 1.4;
+      const tailBasePhase = phase * tailSpeed;
+      const tailAmp = isRunning ? 28.0 : 18.0;
+      set('Param_Angle_Rotation84', Math.sin(tailBasePhase - 0.00) * (tailAmp * 0.65));
+      set('Param_Angle_Rotation85', Math.sin(tailBasePhase - 0.35) * (tailAmp * 0.80));
+      set('Param_Angle_Rotation86', Math.sin(tailBasePhase - 0.70) * (tailAmp * 0.95));
+      set('Param_Angle_Rotation87', Math.sin(tailBasePhase - 1.05) * (tailAmp * 1.10));
+      set('Param_Angle_Rotation88', Math.sin(tailBasePhase - 1.40) * (tailAmp * 1.25));
+      set('Param_Angle_Rotation89', Math.sin(tailBasePhase - 1.75) * (tailAmp * 1.40));
+
+    } else if (isHopping) {
+      if (this.hopPhase === 0) {
+        // Crouch windup
+        set('HipAngleY', -18.0);
+        set('PositionY', -15.0);
+        set('LArm', -22.0);
+        set('RArm', -22.0);
+        set('SkirtY', 14.0);
+        set('Param33', 0.2);
+      } else if (this.hopPhase === 1) {
+        // Airborne apex
+        set('HipAngleY', 14.0);
+        set('PositionY', 12.0);
+        set('LArm', 26.0);
+        set('RArm', 26.0);
+        set('LForearm', 15.0);
+        set('RForearm', 15.0);
+        set('Param33', 0.7); // Legs spread
+        set('SkirtX1', 14.0 * this.facing);
+        set('SkirtY', -16.0); // Skirt lifts with wind
+        set('Param_Angle_Rotation84', -18.0);
+        set('Param_Angle_Rotation85', -22.0);
+        set('Param_Angle_Rotation86', -26.0);
+      } else {
+        // Landing compression
+        set('HipAngleY', -14.0);
+        set('SkirtY', 16.0);
+        set('ShoulderY', 6.0);
+        set('Param33', 0.0);
+      }
+
+    } else if (isSitting || isSleeping) {
+      // Sitting / Sleeping Posture
+      set('Param33', 1.0); // Legs closed together
+      set('LEGAngleZ2', 0.0);
+      set('HipAngleX', 10.0);
+      set('HipAngleY', -14.0);
+      set('HipAngleZ', 0.0);
+      set('ParamBodyAngleY', -8.0);
+
+      // Arms resting on lap
+      set('LArm', 12.0);
+      set('RArm', 12.0);
+      set('LForearm', 16.0);
+      set('RForearm', 16.0);
+      set('LWrist', 8.0);
+      set('RWrist', 8.0);
+
+      // Skirt resting flat
+      set('SkirtY', 14.0);
+      set('SkirtX1', 0);
+      set('SkirtX2', 0);
+
+      // Gentle tail twitch
+      const tailRest = Math.sin(this.time * 0.8) * 8.0;
+      set('Param_Angle_Rotation84', tailRest);
+      set('Param_Angle_Rotation85', tailRest * 1.2);
+      set('Param_Angle_Rotation86', tailRest * 1.4);
+
+    } else {
+      // Natural Organic Idle: Weight Shift between feet
+      const idleSway = Math.sin(this.time * 0.55);
+      const hipTilt = idleSway * 4.5 * this.facing;
+      set('HipAngleZ', hipTilt);
+      set('ShoulderZ', -hipTilt * 0.7);
+      set('ParamBodyAngleZ', -hipTilt * 0.5);
+      set('ParamBodyAngleX', this.bodyX * 0.4);
+      set('ParamBodyAngleY', this.bodyY * 0.3);
+      set('ShoulderY', totalBreath * 0.35);
+
+      set('LArm', Math.sin(this.time * 0.9) * 2.5);
+      set('RArm', -Math.sin(this.time * 0.9) * 2.5);
+      set('LForearm', 4.0);
+      set('RForearm', 4.0);
+      set('LEGAngleZ2', hipTilt * 0.5);
+      set('Param33', 0.0);
+
+      // Idle tail gentle sway
+      const tailIdle = Math.sin(this.time * 1.5);
+      set('Param_Angle_Rotation84', tailIdle * 10.0);
+      set('Param_Angle_Rotation85', tailIdle * 14.0);
+      set('Param_Angle_Rotation86', tailIdle * 18.0);
+      set('Param_Angle_Rotation87', tailIdle * 22.0);
+      set('Param_Angle_Rotation88', tailIdle * 25.0);
+      set('Param_Angle_Rotation89', tailIdle * 28.0);
+    }
+
+    // 4. Lean Forward Posture
+    set('LeanInput', this.lean);
+
+    // 5. Gaze & Pupils
     set('ParamEyeBallX', this.eyeX);
     set('ParamEyeBallY', this.eyeY);
     set('PupilX', this.eyeX * 0.5);
     set('PupilY', this.eyeY * 0.5);
 
-    // Blinking
+    // 6. Blinking
     set('ParamEyeLOpen', this.blinkValue);
     set('ParamEyeROpen', this.blinkValue);
 
-    // Sitting & Leg folding
-    if (this.state === PET_STATES.SIT || isSleeping) {
-      set('Param33', 1.0); // Legs together
-      set('HipAngleX', -8.0);
-      set('ParamBodyAngleY', -6.0);
-    } else if (this.state === PET_STATES.WALK || this.state === PET_STATES.RUN) {
-      // Walking legs
-      set('LEGAngleZ2', Math.sin(this.walkCycle * 2) * 16.0 * this.facing);
-      set('HipAngleZ', Math.sin(this.walkCycle * 2) * 8.0 * this.facing);
-      set('ParamBodyAngleZ', Math.sin(this.walkCycle * 2) * 6.0 * this.facing);
-    } else {
-      set('Param33', 0.0);
-    }
-
-    // Curious Lean Posture
-    set('LeanInput', this.lean);
-
-    // Tail Swaying
-    const tailSpeed = (this.state === PET_STATES.RUN) ? 4.5 : 2.2;
-    const tailCycle = Math.sin(this.time * tailSpeed);
-    set('Param_Angle_Rotation84', tailCycle * 14.0);
-    set('Param_Angle_Rotation85', tailCycle * 18.0);
-    set('Param_Angle_Rotation86', tailCycle * 22.0);
-
-    // Speech-Driven Mouth & Emoting
+    // 7. Speech-Driven Mouth & Emoting
     if (isSpeaking) {
       set('ParamMouthOpenY', this.mouthOpen);
       set('ParamMouthForm', 0.75); // Smile while talking
-      set('JawOpen', this.mouthOpen * 0.8);
+      set('JawOpen', this.mouthOpen * 0.85);
       set('EyeSmile', 0.45);
       set('ParamBrowLY', 0.25 + this.speakingEnergy * 0.4);
       set('ParamBrowRY', 0.25 + this.speakingEnergy * 0.4);
     } else if (isSleeping) {
-      set('EyeSmile', 0.8);
+      set('EyeSmile', 0.85);
       set('ParamMouthForm', 0.3);
+      set('ParamMouthOpenY', 0);
     } else {
       set('ParamMouthForm', 0.2);
     }
 
-    // Touch Feedback
+    // 8. Touch Reactions
     if (this.touchPuff > 0.05) set('CheeckPuff', this.touchPuff);
     if (this.touchPout > 0.05) set('Mouthpucker', this.touchPout);
   }
