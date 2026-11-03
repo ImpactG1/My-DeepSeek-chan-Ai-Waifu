@@ -19,26 +19,28 @@ body, html {
   height: 100%;
   display: flex;
   flex-direction: column;
-  pointer-events: none; /* Let clicks pass through empty spaces */
+  pointer-events: none; /* Let all clicks pass through empty spaces to desktop */
 }
 
-/* Make UI components clickable */
+/* Make UI components interactive */
 #drag-bar, #dialogue-box, #chat-dock, .modal, #live2d-canvas {
   pointer-events: auto;
 }
 
-/* ================= Top Bar ================= */
+/* ================= Top-Right Floating Bar ================= */
 #drag-bar {
+  position: absolute;
+  top: 14px;
+  right: 18px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
-  background: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(12px);
-  border-radius: 12px;
-  margin: 8px 10px 0 10px;
+  gap: 12px;
+  padding: 6px 14px;
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(14px);
+  border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
   z-index: 100;
   -webkit-app-region: drag;
   transition: opacity 0.2s ease;
@@ -49,7 +51,7 @@ body, html {
   align-items: center;
   gap: 8px;
   color: #e2e8f0;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.5px;
 }
@@ -76,9 +78,9 @@ body, html {
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: #94a3b8;
   font-size: 11px;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -102,7 +104,7 @@ body, html {
   color: #ffffff;
 }
 
-/* ================= Live2D Canvas ================= */
+/* ================= Live2D Desktop Canvas ================= */
 #live2d-canvas {
   position: absolute;
   top: 0;
@@ -111,7 +113,7 @@ body, html {
   height: 100%;
   z-index: 10;
   cursor: grab;
-  filter: drop-shadow(0 14px 28px rgba(0, 0, 0, 0.45)) drop-shadow(0 0 16px rgba(14, 165, 233, 0.22));
+  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.4)) drop-shadow(0 0 16px rgba(14, 165, 233, 0.2));
   transform-style: preserve-3d;
   transition: filter 0.3s ease;
 }
@@ -120,66 +122,40 @@ body, html {
   cursor: grabbing;
 }
 
-/* ================= Dynamic Touch Particles ================= */
-#particle-container {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 120;
-  overflow: hidden;
-}
-
-.touch-particle {
-  position: absolute;
-  pointer-events: none;
-  user-select: none;
-  font-size: 26px;
-  animation: floatUpParticle 1.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4));
-}
-
-@keyframes floatUpParticle {
-  0% {
-    transform: translate(-50%, -50%) scale(0.3) rotate(0deg);
-    opacity: 0;
-  }
-  25% {
-    transform: translate(-50%, -75%) scale(1.25) rotate(-12deg);
-    opacity: 1;
-  }
-  75% {
-    opacity: 0.9;
-  }
-  100% {
-    transform: translate(calc(-50% + var(--dx, 0px)), -170%) scale(0.85) rotate(18deg);
-    opacity: 0;
-  }
-}
-
-/* ================= Speech Dialogue Bubble ================= */
+/* ================= Dynamic Floating Speech Bubble ================= */
 #dialogue-box {
   position: absolute;
-  top: 55px;
-  left: 14px;
-  right: 14px;
-  background: rgba(15, 23, 42, 0.88);
+  width: 320px;
+  max-width: 85vw;
+  background: rgba(15, 23, 42, 0.90);
   backdrop-filter: blur(16px);
-  border: 1px solid rgba(56, 189, 248, 0.3);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 15px rgba(14, 165, 233, 0.2);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 16px rgba(14, 165, 233, 0.25);
   border-radius: 16px;
   padding: 12px 14px;
   z-index: 50;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   max-height: 160px;
   overflow-y: auto;
+  pointer-events: auto;
+}
+
+#dialogue-box::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 8px 8px 0;
+  border-style: solid;
+  border-color: rgba(15, 23, 42, 0.90) transparent transparent;
+  display: block;
+  width: 0;
 }
 
 #dialogue-box.hidden {
   opacity: 0;
-  transform: translateY(-10px) scale(0.96);
+  transform: translateY(-8px) scale(0.95);
   pointer-events: none;
 }
 
@@ -234,16 +210,18 @@ body, html {
   100% { transform: scaleY(1); }
 }
 
-/* ================= Bottom Chat Dock ================= */
+/* ================= Bottom-Right Floating Chat Dock ================= */
 #chat-dock {
   position: absolute;
-  bottom: 10px;
-  left: 10px;
-  right: 10px;
+  bottom: 16px;
+  right: 18px;
+  width: 380px;
+  max-width: 90vw;
   z-index: 100;
   display: flex;
   flex-direction: column;
   transition: transform 0.3s ease;
+  pointer-events: auto;
 }
 
 .dock-toggle-btn {
@@ -251,9 +229,9 @@ body, html {
   background: rgba(15, 23, 42, 0.85);
   backdrop-filter: blur(8px);
   color: #94a3b8;
-  width: 32px;
-  height: 18px;
-  border-radius: 9px 9px 0 0;
+  width: 36px;
+  height: 20px;
+  border-radius: 10px 10px 0 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -270,7 +248,7 @@ body, html {
 }
 
 #dock-inner {
-  background: rgba(15, 23, 42, 0.85);
+  background: rgba(15, 23, 42, 0.88);
   backdrop-filter: blur(14px);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 16px;
@@ -397,7 +375,7 @@ body, html {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.65);
   backdrop-filter: blur(8px);
   z-index: 200;
   display: flex;
@@ -405,6 +383,7 @@ body, html {
   justify-content: center;
   padding: 16px;
   transition: opacity 0.2s ease;
+  pointer-events: auto;
 }
 
 .modal.hidden {
@@ -513,4 +492,3 @@ body, html {
 .btn-primary:hover {
   background: #0ea5e9;
 }
-

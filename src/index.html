@@ -29,13 +29,14 @@
 </head>
 <body>
   <div id="app-container">
-    <!-- Top Drag Bar & Window Controls -->
+    <!-- Top-Right Floating Controls & Window Toolbar -->
     <div id="drag-bar">
-      <div class="drag-handle" title="Drag to move DeepSeek-chan">
+      <div class="drag-handle" title="Drag toolbar">
         <span class="status-dot online"></span>
         <span class="app-title">DeepSeek-chan</span>
       </div>
       <div class="win-buttons">
+        <button id="btn-roam" title="Toggle Desktop Roaming / Walk Mode" class="win-btn active">🐾</button>
         <button id="btn-pin" title="Toggle Always on Top" class="win-btn active">📌</button>
         <button id="btn-settings" title="Settings" class="win-btn">⚙️</button>
         <button id="btn-min" title="Minimize" class="win-btn">─</button>
@@ -43,7 +44,7 @@
       </div>
     </div>
 
-    <!-- Speech Dialogue Bubble -->
+    <!-- Dynamic Floating Speech Dialogue Bubble (Follows DeepSeek-chan) -->
     <div id="dialogue-box" class="hidden">
       <div class="bubble-header">
         <span class="speaker-name">DeepSeek-chan</span>
@@ -54,12 +55,10 @@
       <div id="dialogue-text" class="bubble-content"></div>
     </div>
 
-    <!-- Live2D Canvas Layer -->
+    <!-- Live2D Full-Screen Desktop Canvas Layer -->
     <canvas id="live2d-canvas"></canvas>
-    <!-- Dynamic Touch Particles Container -->
-    <div id="particle-container"></div>
 
-    <!-- Bottom Dock / Chat Control Bar -->
+    <!-- Bottom-Right Floating Chat Dock -->
     <div id="chat-dock">
       <div class="dock-toggle-btn" id="btn-toggle-dock" title="Toggle Chat Controls">
         <span id="dock-chevron">▼</span>
@@ -105,7 +104,7 @@
           <div class="form-group">
             <label for="cfg-groq-key">Groq API Key:</label>
             <input type="password" id="cfg-groq-key" placeholder="gsk_..." />
-            <small>Needed for Chat LLM & Whisper STT. Stored locally.</small>
+            <small>Stored in config.json & .env. No need to re-enter.</small>
           </div>
 
           <div class="form-group">

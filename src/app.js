@@ -1,6 +1,6 @@
 // ==========================================
 // DeepSeek-chan AI Waifu Desktop Companion
-// Autonomous VTuber Life Engine & 3D Parallax
+// Desktop Roaming Pet Engine & 3D Life System
 // ==========================================
 
 const { ipcRenderer } = require('electron');
@@ -8,7 +8,17 @@ const { ipcRenderer } = require('electron');
 const BACKEND_URL = 'http://127.0.0.1:8000';
 const MODEL_PATH = '../assets/live2d/deepseek/model.model3.json';
 
-// State
+// States
+const PET_STATES = {
+  IDLE: 'IDLE',
+  WALK: 'WALK',
+  RUN: 'RUN',
+  HOP: 'HOP',
+  SIT: 'SIT',
+  SLEEP: 'SLEEP'
+};
+
+// Global App State
 let live2dModel = null;
 let pixiApp = null;
 let lifeEngine = null;
@@ -19,8 +29,9 @@ let isRecording = false;
 let mediaRecorder = null;
 let audioChunks = [];
 let conversationHistory = [];
+let roamEnabled = true;
 
-// Configuration (stored in server config.json & synced)
+// Configuration
 let config = {
   groqKey: '',
   groqModel: 'qwen/qwen3.8-27b',
@@ -32,7 +43,6 @@ let config = {
 
 // UI Elements
 const canvas = document.getElementById('live2d-canvas');
-const particleContainer = document.getElementById('particle-container');
 const dialogueBox = document.getElementById('dialogue-box');
 const dialogueText = document.getElementById('dialogue-text');
 const audioWave = document.getElementById('audio-wave');
@@ -43,9 +53,11 @@ const chatDock = document.getElementById('chat-dock');
 const btnToggleDock = document.getElementById('btn-toggle-dock');
 const dockChevron = document.getElementById('dock-chevron');
 const settingsModal = document.getElementById('settings-modal');
+const btnRoam = document.getElementById('btn-roam');
+const dragBar = document.getElementById('drag-bar');
 
 // ==========================================
-// 1. Load Server Configuration (Permanent Storage)
+// 1. Load Server Configuration (Permanent)
 // ==========================================
 async function syncConfigFromServer() {
   try {
@@ -65,14 +77,33 @@ async function syncConfigFromServer() {
 }
 
 // ==========================================
-// 2. Autonomous VTuber Life Engine
+// 2. Desktop Roaming & Autonomous Life Engine
 // ==========================================
-class AutonomousLifeEngine {
+class DesktopLifeEngine {
   constructor(model) {
     this.model = model;
     this.time = 0;
 
-    // Head Angles (3D Perspective)
+    // Dimensions & Positioning
+    this.groundY = window.innerHeight - 440;
+    this.baseScale = 0.42;
+    this.facing = 1; // 1 = right, -1 = left
+
+    // Pet State Machine
+    this.state = PET_STATES.IDLE;
+    this.stateTimer = 0;
+    this.stateDuration = 6.0;
+
+    // Movement Navigation
+    this.targetX = model.x;
+    this.moveSpeed = 95;
+    this.walkCycle = 0;
+
+    // Hop / Jump Physics
+    this.hopVY = 0;
+    this.hopPhase = 0; // 0=crouch, 1=airborne, 2=land
+
+    // 3D Head & Torso Angles
     this.angleX = 0;
     this.angleY = 0;
     this.angleZ = 0;
@@ -80,7 +111,6 @@ class AutonomousLifeEngine {
     this.targetAngleY = 0;
     this.targetAngleZ = 0;
 
-    // Body & Torso Parallax
     this.bodyX = 0;
     this.bodyY = 0;
     this.bodyZ = 0;
@@ -93,109 +123,87 @@ class AutonomousLifeEngine {
     this.saccadeX = 0;
     this.saccadeY = 0;
     this.saccadeTimer = 0;
-    this.nextSaccade = 1.5 + Math.random() * 2.0;
+    this.nextSaccade = 1.8;
 
-    // Blinking
+    // Biological Blinking
     this.blinkValue = 1.0;
     this.isBlinking = false;
     this.blinkTimer = 0;
-    this.nextBlink = 3.0;
+    this.nextBlink = 3.2;
     this.blinkProgress = 0;
 
-    // User Mouse Tracking
+    // Mouse Tracking
     this.userMouseX = 0;
     this.userMouseY = 0;
+    this.rawMouseX = window.innerWidth / 2;
+    this.rawMouseY = window.innerHeight / 2;
     this.lastMouseMoveTime = Date.now();
-
-    // Autonomous Life & Fidgets
-    this.idleActionTimer = 0;
-    this.nextActionTime = 14.0 + Math.random() * 10.0;
-    this.isThinking = false;
-    this.currentMood = 'NORMAL'; // NORMAL, THINKING, BLUSH, HAPPY
 
     // Speech Audio Reactive
     this.speakingEnergy = 0;
     this.mouthOpen = 0;
-    this.audioWaveAvg = 0;
 
     // Touch Feedback
     this.touchPuff = 0;
     this.touchPout = 0;
     this.touchRecoil = 0;
+
+    // Thought state
+    this.isThinking = false;
   }
 
   update(dt) {
     this.time += dt;
 
-    // 1. Organic Multi-Frequency Breathing
-    const breath = (Math.sin(this.time * 1.9) + 1) * 0.5;
-    const deepBreath = Math.sin(this.time * 0.45) * 0.15;
-    const totalBreath = Math.max(0, Math.min(1.0, breath + deepBreath));
+    // 1. Update Pet State Machine (Walk, Run, Hop, Sit, Sleep)
+    if (!isWindowDragging) {
+      this.updateStateMachine(dt);
+    }
 
-    // 2. Weight Shifting (Realistic Lateral Body Sway)
-    const sway1 = Math.sin(this.time * 0.65) * 3.5;
-    const sway2 = Math.cos(this.time * 0.32) * 2.0;
-    const naturalBodySwayX = sway1 + sway2;
-    const naturalHeadCounterTilt = -naturalBodySwayX * 0.3;
+    // 2. Breathing & Body Sway
+    const isSleeping = this.state === PET_STATES.SLEEP;
+    const breathFreq = isSleeping ? 1.2 : 1.9;
+    const breath = (Math.sin(this.time * breathFreq) + 1) * 0.5;
+    const totalBreath = isSleeping ? breath * 0.7 : breath;
 
-    // 3. Eye Saccades (Rapid Micro-glances)
+    // 3. Eye Saccades
     this.saccadeTimer += dt;
     if (this.saccadeTimer >= this.nextSaccade) {
       this.saccadeTimer = 0;
-      this.nextSaccade = 1.5 + Math.random() * 3.0;
-      if (!this.isThinking) {
-        this.saccadeX = (Math.random() - 0.5) * 0.28;
-        this.saccadeY = (Math.random() - 0.5) * 0.22;
+      this.nextSaccade = 1.5 + Math.random() * 2.8;
+      if (!isSleeping && !this.isThinking) {
+        this.saccadeX = (Math.random() - 0.5) * 0.26;
+        this.saccadeY = (Math.random() - 0.5) * 0.20;
       }
     }
 
-    // 4. Biological Non-Periodic Blinking
-    this.blinkTimer += dt;
-    if (!this.isBlinking && this.blinkTimer >= this.nextBlink) {
-      this.isBlinking = true;
-      this.blinkTimer = 0;
-      this.blinkProgress = 0;
-      this.nextBlink = 2.5 + Math.random() * 4.5;
-    }
-    if (this.isBlinking) {
-      this.blinkProgress += dt * 13.0; // ~130ms quick blink
-      if (this.blinkProgress <= 1.0) {
-        this.blinkValue = 1.0 - Math.sin(this.blinkProgress * Math.PI);
-      } else {
-        this.blinkValue = 1.0;
-        this.isBlinking = false;
-        // 20% chance of double-blink
-        if (Math.random() < 0.22) {
-          this.nextBlink = 0.18;
+    // 4. Biological Blinking
+    if (!isSleeping) {
+      this.blinkTimer += dt;
+      if (!this.isBlinking && this.blinkTimer >= this.nextBlink) {
+        this.isBlinking = true;
+        this.blinkTimer = 0;
+        this.blinkProgress = 0;
+        this.nextBlink = 2.5 + Math.random() * 4.0;
+      }
+      if (this.isBlinking) {
+        this.blinkProgress += dt * 14.0;
+        if (this.blinkProgress <= 1.0) {
+          this.blinkValue = 1.0 - Math.sin(this.blinkProgress * Math.PI);
+        } else {
+          this.blinkValue = 1.0;
+          this.isBlinking = false;
+          if (Math.random() < 0.2) this.nextBlink = 0.18;
         }
       }
-    }
-
-    // 5. Head Tracking vs Autonomous Wander
-    const timeSinceMouseMove = (Date.now() - this.lastMouseMoveTime) / 1000;
-    let targetX = 0;
-    let targetY = 0;
-
-    if (this.isThinking) {
-      // Look up and away when thinking
-      targetX = 14.0;
-      targetY = 12.0;
-      this.targetAngleZ = 8.0;
-    } else if (timeSinceMouseMove < 5.0) {
-      // Active user mouse tracking
-      targetX = this.userMouseX * 26.0;
-      targetY = -this.userMouseY * 20.0;
-      this.targetAngleZ = naturalHeadCounterTilt + (-targetX * 0.18);
     } else {
-      // Autonomous gentle gaze wander (looking around room, glancing back at user)
-      const wanderX = Math.sin(this.time * 0.42) * 16.0 + Math.sin(this.time * 0.95) * 7.0;
-      const wanderY = Math.cos(this.time * 0.35) * 8.0;
-      targetX = wanderX;
-      targetY = wanderY;
-      this.targetAngleZ = naturalHeadCounterTilt;
+      this.blinkValue = 0; // Eyes closed in sleep
     }
 
-    // Speech-driven conversational cadence (Head nods on voice peaks)
+    // 5. Head Tracking & Parallax
+    this.updateHeadAndTorso(dt, isSleeping);
+
+    // 6. Speech Head Nodding
     let speechNodY = 0;
     let speechTiltZ = 0;
     if (isSpeaking && this.speakingEnergy > 0.05) {
@@ -203,56 +211,253 @@ class AutonomousLifeEngine {
       speechTiltZ = Math.sin(this.time * 4.5) * (this.speakingEnergy * 5.0);
     }
 
-    // Smooth second-order spring/lerp (natural organic lag & damping)
+    // Smooth second-order spring/lerp for angles
     const lerpSpeed = dt * 6.5;
-    this.angleX += (targetX - this.angleX) * lerpSpeed;
-    this.angleY += (targetY + speechNodY - this.angleY) * lerpSpeed;
+    this.angleX += (this.targetAngleX - this.angleX) * lerpSpeed;
+    this.angleY += (this.targetAngleY + speechNodY - this.angleY) * lerpSpeed;
     this.angleZ += (this.targetAngleZ + speechTiltZ - this.angleZ) * lerpSpeed;
 
-    // Eye gaze
+    // Eye gaze tracks with target
     const targetEyeX = (this.angleX / 26.0) * 0.72 + this.saccadeX;
     const targetEyeY = (this.angleY / 20.0) * 0.72 + this.saccadeY;
     this.eyeX += (targetEyeX - this.eyeX) * (dt * 12.0);
     this.eyeY += (targetEyeY - this.eyeY) * (dt * 12.0);
 
-    // Torso follows with 3D parallax
-    const targetBodyX = this.angleX * 0.35 + naturalBodySwayX;
-    const targetBodyY = totalBreath * 3.5;
-    const targetBodyZ = naturalHeadCounterTilt * 0.5;
-    this.bodyX += (targetBodyX - this.bodyX) * (dt * 4.5);
-    this.bodyY += (targetBodyY - this.bodyY) * (dt * 4.5);
-    this.bodyZ += (targetBodyZ - this.bodyZ) * (dt * 4.5);
-
-    // Lean posture interpolation
+    // Body follow
+    this.bodyX += (this.angleX * 0.35 - this.bodyX) * (dt * 4.5);
+    this.bodyY += (totalBreath * 3.5 - this.bodyY) * (dt * 4.5);
+    this.bodyZ += (this.targetAngleZ * 0.4 - this.bodyZ) * (dt * 4.5);
     this.lean += (this.targetLean - this.lean) * (dt * 3.5);
 
-    // Touch feedback decay
+    // Touch decays
     this.touchPuff *= Math.max(0, 1.0 - dt * 2.0);
     this.touchPout *= Math.max(0, 1.0 - dt * 2.0);
     this.touchRecoil *= Math.max(0, 1.0 - dt * 3.0);
 
-    // 6. Autonomous Fidgets & Gestures (Every 15-25s)
-    this.idleActionTimer += dt;
-    if (this.idleActionTimer >= this.nextActionTime && !isSpeaking && !this.isThinking) {
-      this.idleActionTimer = 0;
-      this.nextActionTime = 16.0 + Math.random() * 18.0;
-      this.triggerAutonomousLifeAction();
-    }
+    // 7. Apply to Live2D core model
+    this.applyParameters(totalBreath, isSleeping);
 
-    // 7. Apply parameters to Live2D core model
-    this.applyParameters(totalBreath);
+    // 8. Update Dialogue Bubble Position (Follows her head!)
+    updateDialoguePosition();
   }
 
-  applyParameters(totalBreath) {
+  updateStateMachine(dt) {
+    if (!roamEnabled && this.state !== PET_STATES.IDLE && this.state !== PET_STATES.SIT) {
+      this.state = PET_STATES.IDLE;
+    }
+
+    this.stateTimer += dt;
+
+    switch (this.state) {
+      case PET_STATES.IDLE:
+        // Standing and breathing
+        this.model.y += (this.groundY - this.model.y) * (dt * 6.0);
+        this.targetLean = 0;
+
+        if (roamEnabled && this.stateTimer >= this.stateDuration && !isSpeaking && !this.isThinking) {
+          this.pickNextState();
+        }
+        break;
+
+      case PET_STATES.WALK:
+        this.walkCycle += dt * 6.5;
+        const dx = this.targetX - this.model.x;
+        const dist = Math.abs(dx);
+
+        if (dist > 12) {
+          const moveDir = dx > 0 ? 1 : -1;
+          this.facing = moveDir;
+          this.model.scale.x = Math.abs(this.baseScale) * this.facing;
+          this.model.x += moveDir * this.moveSpeed * dt;
+
+          // Cute walking step bounce
+          this.model.y = this.groundY + Math.abs(Math.sin(this.walkCycle * 2)) * -9;
+        } else {
+          // Reached destination!
+          this.state = Math.random() < 0.4 ? PET_STATES.HOP : PET_STATES.IDLE;
+          this.stateTimer = 0;
+          this.stateDuration = 4.0 + Math.random() * 6.0;
+        }
+        break;
+
+      case PET_STATES.RUN:
+        this.walkCycle += dt * 11.0;
+        const rdx = this.targetX - this.model.x;
+        const rdist = Math.abs(rdx);
+
+        if (rdist > 16) {
+          const rDir = rdx > 0 ? 1 : -1;
+          this.facing = rDir;
+          this.model.scale.x = Math.abs(this.baseScale) * this.facing;
+          this.model.x += rDir * (this.moveSpeed * 2.2) * dt;
+          this.targetLean = 0.85;
+
+          // Energetic run bounce
+          this.model.y = this.groundY + Math.abs(Math.sin(this.walkCycle * 2)) * -16;
+        } else {
+          this.targetLean = 0;
+          this.state = PET_STATES.IDLE;
+          this.stateTimer = 0;
+          this.stateDuration = 5.0;
+        }
+        break;
+
+      case PET_STATES.HOP:
+        this.handleHopState(dt);
+        break;
+
+      case PET_STATES.SIT:
+        // Lowers down to sit on taskbar
+        const sitY = this.groundY + 36;
+        this.model.y += (sitY - this.model.y) * (dt * 5.0);
+
+        if (this.stateTimer >= this.stateDuration && !isSpeaking) {
+          if (Math.random() < 0.45) {
+            // Falls asleep!
+            this.state = PET_STATES.SLEEP;
+            this.stateTimer = 0;
+            this.stateDuration = 25.0 + Math.random() * 30.0;
+            showDialogue("DeepSeek-chan is napping peacefully... zZz");
+          } else {
+            // Stands back up
+            this.state = PET_STATES.IDLE;
+            this.stateTimer = 0;
+            this.stateDuration = 5.0;
+          }
+        }
+        break;
+
+      case PET_STATES.SLEEP:
+        // Napping peacefully
+        const sleepY = this.groundY + 36;
+        this.model.y += (sleepY - this.model.y) * (dt * 4.0);
+
+        if (this.stateTimer >= this.stateDuration || isSpeaking) {
+          this.wakeUp();
+        }
+        break;
+    }
+  }
+
+  pickNextState() {
+    this.stateTimer = 0;
+    const rand = Math.random();
+
+    if (rand < 0.45) {
+      // Walk somewhere
+      this.state = PET_STATES.WALK;
+      this.targetX = 100 + Math.random() * (window.innerWidth - 280);
+      this.moveSpeed = 85 + Math.random() * 25;
+      this.stateDuration = 12.0;
+    } else if (rand < 0.65) {
+      // Sit down
+      this.state = PET_STATES.SIT;
+      this.stateDuration = 14.0 + Math.random() * 20.0;
+    } else if (rand < 0.85) {
+      // Hop joyfully
+      this.state = PET_STATES.HOP;
+      this.hopPhase = 0;
+      this.hopVY = 0;
+      this.stateDuration = 2.0;
+    } else {
+      // Playful run
+      this.state = PET_STATES.RUN;
+      this.targetX = 120 + Math.random() * (window.innerWidth - 300);
+      this.stateDuration = 8.0;
+    }
+  }
+
+  handleHopState(dt) {
+    if (this.hopPhase === 0) {
+      // Crouch windup
+      this.model.y += ((this.groundY + 12) - this.model.y) * (dt * 15.0);
+      if (this.stateTimer > 0.18) {
+        this.hopPhase = 1;
+        this.hopVY = -15.5; // Launch!
+      }
+    } else if (this.hopPhase === 1) {
+      // Airborne
+      this.hopVY += 34.0 * dt; // Gravity
+      this.model.y += this.hopVY;
+      this.model.x += this.facing * 35.0 * dt;
+
+      if (this.model.y >= this.groundY) {
+        this.model.y = this.groundY;
+        this.hopPhase = 2;
+        this.stateTimer = 0;
+      }
+    } else if (this.hopPhase === 2) {
+      // Land squash recovery
+      if (this.stateTimer > 0.15) {
+        this.state = PET_STATES.IDLE;
+        this.stateTimer = 0;
+        this.stateDuration = 4.0;
+      }
+    }
+  }
+
+  wakeUp() {
+    this.state = PET_STATES.IDLE;
+    this.stateTimer = 0;
+    this.stateDuration = 5.0;
+    triggerExpression('blush');
+    showDialogue("Fwaaah... Good morning, Master! Did I doze off? [blush]");
+    speakText("Fwaaah... Good morning, Master! Did I doze off?");
+  }
+
+  updateHeadAndTorso(dt, isSleeping) {
+    const timeSinceMouseMove = (Date.now() - this.lastMouseMoveTime) / 1000;
+
+    if (isSleeping) {
+      // Head nods down in deep sleep
+      this.targetAngleX = 0;
+      this.targetAngleY = -22.0;
+      this.targetAngleZ = 12.0 * this.facing;
+      return;
+    }
+
+    if (this.isThinking) {
+      this.targetAngleX = 14.0 * this.facing;
+      this.targetAngleY = 12.0;
+      this.targetAngleZ = 8.0;
+      return;
+    }
+
+    if (this.state === PET_STATES.WALK || this.state === PET_STATES.RUN) {
+      // Look in walking direction
+      this.targetAngleX = 14.0 * this.facing;
+      this.targetAngleY = 2.0;
+      this.targetAngleZ = Math.sin(this.walkCycle * 2) * -5.0 * this.facing;
+      return;
+    }
+
+    if (timeSinceMouseMove < 4.5) {
+      // Active tracking of user cursor relative to model head
+      const headScreenX = this.model.x;
+      const headScreenY = this.model.y - 200;
+      const dx = (this.rawMouseX - headScreenX) / window.innerWidth;
+      const dy = (this.rawMouseY - headScreenY) / window.innerHeight;
+
+      this.targetAngleX = Math.max(-28, Math.min(28, dx * 50.0));
+      this.targetAngleY = Math.max(-20, Math.min(20, -dy * 40.0));
+      this.targetAngleZ = -this.targetAngleX * 0.18;
+    } else {
+      // Autonomous wander gaze
+      this.targetAngleX = (Math.sin(this.time * 0.4) * 16.0 + Math.sin(this.time * 0.9) * 7.0) * this.facing;
+      this.targetAngleY = Math.cos(this.time * 0.35) * 8.0;
+      this.targetAngleZ = Math.sin(this.time * 0.5) * 4.0;
+    }
+  }
+
+  applyParameters(totalBreath, isSleeping) {
     const core = this.model?.internalModel?.coreModel;
     if (!core) return;
 
-    // Helper
     const set = (id, val) => {
       try { core.setParameterValueById(id, val); } catch (e) {}
     };
 
-    // 3D Perspective Rotation (Head)
+    // 3D Angles
     set('AngleX', this.angleX);
     set('AngleY', this.angleY);
     set('AngleZ', this.angleZ);
@@ -260,36 +465,50 @@ class AutonomousLifeEngine {
     set('ParamAngleY', this.angleY);
     set('ParamAngleZ', this.angleZ);
 
-    // 3D Torso Parallax (Spine & Ribcage)
+    // 3D Torso Parallax
     set('ParamBodyAngleX', this.bodyX * 0.5);
     set('ParamBodyAngleY', this.bodyY * 0.4);
     set('ParamBodyAngleZ', this.bodyZ);
 
-    // Volumetric Body Position Shift (Parallax depth)
+    // Volumetric Body Position Shift
     set('PositionX', -this.angleX * 0.12 + this.bodyX * 0.08);
     set('PositionY', this.bodyY * 0.08);
     set('PositionZ', this.bodyZ * 0.1 - this.touchRecoil);
 
-    // Organic Breathing & Shoulders
+    // Breathing & Shoulders
     set('ParamBreath', totalBreath);
     set('ShoulderY', totalBreath * 0.35);
 
-    // Biological Gaze & Pupils
+    // Gaze & Pupils
     set('ParamEyeBallX', this.eyeX);
     set('ParamEyeBallY', this.eyeY);
     set('PupilX', this.eyeX * 0.5);
     set('PupilY', this.eyeY * 0.5);
 
-    // Independent Eye Blinks (With smile squint during speech)
-    const effectiveBlink = isSpeaking ? Math.min(this.blinkValue, 0.85) : this.blinkValue;
-    set('ParamEyeLOpen', effectiveBlink);
-    set('ParamEyeROpen', effectiveBlink);
+    // Blinking
+    set('ParamEyeLOpen', this.blinkValue);
+    set('ParamEyeROpen', this.blinkValue);
+
+    // Sitting & Leg folding
+    if (this.state === PET_STATES.SIT || isSleeping) {
+      set('Param33', 1.0); // Legs together
+      set('HipAngleX', -8.0);
+      set('ParamBodyAngleY', -6.0);
+    } else if (this.state === PET_STATES.WALK || this.state === PET_STATES.RUN) {
+      // Walking legs
+      set('LEGAngleZ2', Math.sin(this.walkCycle * 2) * 16.0 * this.facing);
+      set('HipAngleZ', Math.sin(this.walkCycle * 2) * 8.0 * this.facing);
+      set('ParamBodyAngleZ', Math.sin(this.walkCycle * 2) * 6.0 * this.facing);
+    } else {
+      set('Param33', 0.0);
+    }
 
     // Curious Lean Posture
     set('LeanInput', this.lean);
 
-    // Whale/Fish Tail Swaying (DeepSeek Mascot Physics)
-    const tailCycle = Math.sin(this.time * 2.2);
+    // Tail Swaying
+    const tailSpeed = (this.state === PET_STATES.RUN) ? 4.5 : 2.2;
+    const tailCycle = Math.sin(this.time * tailSpeed);
     set('Param_Angle_Rotation84', tailCycle * 14.0);
     set('Param_Angle_Rotation85', tailCycle * 18.0);
     set('Param_Angle_Rotation86', tailCycle * 22.0);
@@ -297,72 +516,21 @@ class AutonomousLifeEngine {
     // Speech-Driven Mouth & Emoting
     if (isSpeaking) {
       set('ParamMouthOpenY', this.mouthOpen);
-      set('ParamMouthForm', 0.75); // Warm smile while speaking
+      set('ParamMouthForm', 0.75); // Smile while talking
       set('JawOpen', this.mouthOpen * 0.8);
-      set('EyeSmile', 0.45); // Warm eye crescents
+      set('EyeSmile', 0.45);
       set('ParamBrowLY', 0.25 + this.speakingEnergy * 0.4);
       set('ParamBrowRY', 0.25 + this.speakingEnergy * 0.4);
+    } else if (isSleeping) {
+      set('EyeSmile', 0.8);
+      set('ParamMouthForm', 0.3);
     } else {
-      set('ParamMouthForm', 0.2); // Gentle neutral smile
+      set('ParamMouthForm', 0.2);
     }
 
-    // Touch Feedback Parameters
-    if (this.touchPuff > 0.05) {
-      set('CheeckPuff', this.touchPuff);
-    }
-    if (this.touchPout > 0.05) {
-      set('Mouthpucker', this.touchPout);
-    }
-  }
-
-  triggerAutonomousLifeAction() {
-    const actions = ['curious_lean', 'playful_grass', 'warm_wave', 'smart_glasses', 'sweet_gaze'];
-    const chosen = actions[Math.floor(Math.random() * actions.length)];
-
-    console.log('DeepSeek-chan autonomous thought:', chosen);
-
-    switch (chosen) {
-      case 'curious_lean':
-        this.targetLean = 0.85;
-        this.saccadeX = (Math.random() - 0.5) * 0.4;
-        setTimeout(() => { this.targetLean = 0; }, 4500);
-        break;
-
-      case 'playful_grass':
-        triggerMotion('HoldGrass');
-        triggerExpression('cute_teeth');
-        setTimeout(() => {
-          triggerMotion('PutGrass');
-          triggerExpression('reset');
-        }, 5000);
-        break;
-
-      case 'warm_wave':
-        triggerMotion('Wave');
-        triggerExpression('blush');
-        setTimeout(() => {
-          triggerMotion('LowerHand');
-          triggerExpression('reset');
-        }, 3800);
-        break;
-
-      case 'smart_glasses':
-        triggerExpression('glasses');
-        triggerMotion('Point');
-        setTimeout(() => {
-          triggerMotion('LowerFinger');
-          triggerExpression('reset');
-        }, 4500);
-        break;
-
-      case 'sweet_gaze':
-        triggerExpression('heart_eyes');
-        setTimeout(() => {
-          triggerExpression('blush');
-          setTimeout(() => triggerExpression('reset'), 3000);
-        }, 1500);
-        break;
-    }
+    // Touch Feedback
+    if (this.touchPuff > 0.05) set('CheeckPuff', this.touchPuff);
+    if (this.touchPout > 0.05) set('Mouthpucker', this.touchPout);
   }
 }
 
@@ -385,51 +553,53 @@ async function initLive2D() {
       resizeTo: window
     });
 
-    console.log('Loading DeepSeek-chan Live2D model from:', MODEL_PATH);
+    console.log('Loading DeepSeek-chan from:', MODEL_PATH);
     live2dModel = await PIXI.live2d.Live2DModel.from(MODEL_PATH, {
       autoInteract: false
     });
 
     pixiApp.stage.addChild(live2dModel);
 
-    // Initialize Autonomous VTuber Life Engine
-    lifeEngine = new AutonomousLifeEngine(live2dModel);
+    // Initialize Desktop Life Engine
+    lifeEngine = new DesktopLifeEngine(live2dModel);
 
-    // Hook life engine into Pixi ticker (60 FPS smooth updates)
+    // Hook life engine into 60 FPS ticker
     pixiApp.ticker.add((delta) => {
       lifeEngine.update(delta / 60);
     });
 
-    // Hook parameter evaluation right before rendering
+    // Parameter hook right before drawing
     if (live2dModel.internalModel) {
       live2dModel.internalModel.on('beforeModelUpdate', () => {
-        if (lifeEngine) lifeEngine.applyParameters(1.0);
+        if (lifeEngine) lifeEngine.applyParameters(1.0, lifeEngine.state === PET_STATES.SLEEP);
       });
     }
 
     updateModelLayout();
     window.addEventListener('resize', updateModelLayout);
 
-    // Track mouse coordinates for 3D perspective
+    // Global cursor tracking & smart mouse forwarding
     window.addEventListener('mousemove', (e) => {
       if (lifeEngine) {
-        lifeEngine.userMouseX = (e.clientX / window.innerWidth) - 0.5;
-        lifeEngine.userMouseY = (e.clientY / window.innerHeight) - 0.5;
+        lifeEngine.rawMouseX = e.clientX;
+        lifeEngine.rawMouseY = e.clientY;
         lifeEngine.lastMouseMoveTime = Date.now();
       }
+
+      // Check if mouse is hovering over character or UI
+      checkPointerHover(e.clientX, e.clientY);
     });
 
-    // Setup tactile touch reactions & window dragging
     setupModelInteractivity();
 
-    console.log('DeepSeek-chan Autonomous Life Engine initialized successfully!');
-    
+    console.log('DeepSeek-chan Desktop Roaming Pet initialized successfully!');
+
     // Greeting
     setTimeout(() => {
       triggerExpression('blush');
       triggerMotion('Wave');
-      showDialogue("Master! Yahoo~ I'm DeepSeek-chan! I feel so energetic and alive today! Let's chat! [heart_eyes]");
-      speakText("Master! Yahoo~ I'm DeepSeek-chan! I feel so energetic and alive today! Let's chat!");
+      showDialogue("Master! Yahoo~ I can freely hop and roam across your entire desktop now! [heart_eyes]");
+      speakText("Master! Yahoo~ I can freely hop and roam across your entire desktop now!");
     }, 1200);
 
   } catch (err) {
@@ -443,15 +613,73 @@ function updateModelLayout() {
   const width = window.innerWidth;
   const height = window.innerHeight;
 
-  const scale = (height * 0.88) / live2dModel.height;
+  // Scale model to a comfortable pet size (~450px tall)
+  const targetHeight = Math.min(480, height * 0.52);
+  const scale = targetHeight / live2dModel.height;
+
+  if (lifeEngine) {
+    lifeEngine.baseScale = scale;
+    lifeEngine.groundY = height - targetHeight * 0.94;
+  }
+
   live2dModel.scale.set(scale);
 
-  live2dModel.x = (width - live2dModel.width) / 2;
-  live2dModel.y = height - live2dModel.height * 0.96;
+  // Position at bottom-right initially
+  if (!live2dModel.x || live2dModel.x === 0) {
+    live2dModel.x = width - targetHeight * 0.85;
+    live2dModel.y = height - targetHeight * 0.94;
+    if (lifeEngine) lifeEngine.targetX = live2dModel.x;
+  }
 }
 
 // ==========================================
-// 4. Tactile Touch & Click Interactions
+// 4. Smart Click-Through & Dialogue Following
+// ==========================================
+let isMouseCaptured = false;
+
+function checkPointerHover(x, y) {
+  let shouldCapture = false;
+
+  // 1. Check Live2D character bounds
+  if (live2dModel) {
+    const bounds = live2dModel.getBounds();
+    if (bounds.contains(x, y)) shouldCapture = true;
+  }
+
+  // 2. Check UI elements
+  if (isPointInElement(chatDock, x, y)) shouldCapture = true;
+  if (!dialogueBox.classList.contains('hidden') && isPointInElement(dialogueBox, x, y)) shouldCapture = true;
+  if (!settingsModal.classList.contains('hidden') && isPointInElement(settingsModal, x, y)) shouldCapture = true;
+  if (isPointInElement(dragBar, x, y)) shouldCapture = true;
+
+  if (shouldCapture !== isMouseCaptured) {
+    isMouseCaptured = shouldCapture;
+    ipcRenderer.send('set-clickthrough', !shouldCapture);
+  }
+}
+
+function isPointInElement(el, x, y) {
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+}
+
+function updateDialoguePosition() {
+  if (!live2dModel || dialogueBox.classList.contains('hidden')) return;
+
+  const bubbleWidth = dialogueBox.offsetWidth || 300;
+  let targetX = live2dModel.x - (bubbleWidth / 2);
+  targetX = Math.max(20, Math.min(window.innerWidth - bubbleWidth - 20, targetX));
+
+  let targetY = live2dModel.y - 120;
+  targetY = Math.max(24, targetY);
+
+  dialogueBox.style.left = `${targetX}px`;
+  dialogueBox.style.top = `${targetY}px`;
+}
+
+// ==========================================
+// 5. Tactile Touch & Drag Interactions
 // ==========================================
 let isWindowDragging = false;
 let pointerStartX = 0;
@@ -460,9 +688,6 @@ let modelStartX = 0;
 let modelStartY = 0;
 
 function setupModelInteractivity() {
-  live2dModel.interactive = true;
-  live2dModel.buttonMode = true;
-
   canvas.addEventListener('pointerdown', (e) => {
     pointerStartX = e.clientX;
     pointerStartY = e.clientY;
@@ -477,6 +702,7 @@ function setupModelInteractivity() {
       isWindowDragging = true;
       live2dModel.x = modelStartX + (e.clientX - pointerStartX);
       live2dModel.y = modelStartY + (e.clientY - pointerStartY);
+      if (lifeEngine) lifeEngine.targetX = live2dModel.x;
     }
   });
 
@@ -485,7 +711,6 @@ function setupModelInteractivity() {
     const dist = Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY);
 
     if (dist <= 8 && !isWindowDragging) {
-      // It's a tactile touch/click on DeepSeek-chan!
       handleModelTouch(e.clientX, e.clientY);
     }
 
@@ -497,37 +722,39 @@ function setupModelInteractivity() {
 
 function handleModelTouch(clientX, clientY) {
   if (!live2dModel) return;
+
+  // Wake up if sleeping
+  if (lifeEngine && lifeEngine.state === PET_STATES.SLEEP) {
+    lifeEngine.wakeUp();
+    return;
+  }
+
   const bounds = live2dModel.getBounds();
-  
   if (!bounds.contains(clientX, clientY)) return;
 
   const relY = (clientY - bounds.y) / bounds.height;
   const relX = (clientX - bounds.x) / bounds.width;
 
-  console.log(`Touch at relX=${relX.toFixed(2)}, relY=${relY.toFixed(2)}`);
-
   if (relY < 0.35) {
     // 1. HEAD PAT!
-    spawnParticles(clientX, clientY, ['💖', '✨', '💕', '🌸']);
     triggerExpression('blush');
     triggerExpression('heart_eyes');
     if (lifeEngine) {
-      lifeEngine.targetAngleY = 14.0; // Tilts head up warmly into hand
+      lifeEngine.targetAngleY = 14.0;
       lifeEngine.targetAngleZ = 6.0;
     }
 
     const patLines = [
       "Ehehe~ Headpats from Master make me so happy! [heart_eyes]",
-      "Wah~ Master's hand is so warm and gentle... Don't stop! [blush]",
-      "Hai~ More pats please! I'm your good girl, right? [heart_eyes]"
+      "Wah~ Master's hand is so warm and gentle... [blush]",
+      "Hai~ More pats please! I'm your good girl! [heart_eyes]"
     ];
     const line = patLines[Math.floor(Math.random() * patLines.length)];
     showDialogue(line);
     speakText(line);
 
   } else if (relY >= 0.35 && relY < 0.52 && (relX < 0.36 || relX > 0.64)) {
-    // 2. CHEEK PINCH / POKE!
-    spawnParticles(clientX, clientY, ['✨', '⭐', '💢']);
+    // 2. CHEEK PINCH!
     triggerExpression('blush');
     if (lifeEngine) {
       lifeEngine.touchPuff = 1.0;
@@ -536,7 +763,7 @@ function handleModelTouch(clientX, clientY) {
 
     const cheekLines = [
       "Mou~ Master! My cheeks are not mochi! Stop squishing! [smug]",
-      "Eep! Master is so naughty today! But it doesn't hurt, ehehe~ [blush]",
+      "Eep! Master is so naughty today! But it feels cute, ehehe~ [blush]",
       "Pout~ If you squish my cheeks, I won't share my snacks! [smug]"
     ];
     const line = cheekLines[Math.floor(Math.random() * cheekLines.length)];
@@ -545,15 +772,14 @@ function handleModelTouch(clientX, clientY) {
 
   } else {
     // 3. TORSO / BELLY POKE!
-    spawnParticles(clientX, clientY, ['💧', '✨', '❓']);
     triggerExpression('cold_sweat');
     if (lifeEngine) {
-      lifeEngine.touchRecoil = 8.0; // Recoil back in surprise
+      lifeEngine.touchRecoil = 7.0;
     }
 
     const pokeLines = [
       "Kyaa! That tickles, Master! No poking there! [cold_sweat]",
-      "Fufu, are you trying to distract me, Master? [smug]",
+      "Fufu, are you trying to distract me from my walk, Master? [smug]",
       "Eep! That surprised me! Careful, Master! [cold_sweat]"
     ];
     const line = pokeLines[Math.floor(Math.random() * pokeLines.length)];
@@ -562,22 +788,8 @@ function handleModelTouch(clientX, clientY) {
   }
 }
 
-function spawnParticles(x, y, symbols) {
-  for (let i = 0; i < 4; i++) {
-    const p = document.createElement('div');
-    p.className = 'touch-particle';
-    p.textContent = symbols[Math.floor(Math.random() * symbols.length)];
-    p.style.left = `${x + (Math.random() - 0.5) * 40}px`;
-    p.style.top = `${y + (Math.random() - 0.5) * 30}px`;
-    p.style.setProperty('--dx', `${(Math.random() - 0.5) * 60}px`);
-    particleContainer.appendChild(p);
-
-    setTimeout(() => { p.remove(); }, 1300);
-  }
-}
-
 // ==========================================
-// 5. Expressions & Motions Controller
+// 6. Expressions & Motions Controller
 // ==========================================
 function triggerExpression(expName) {
   if (!live2dModel) return;
@@ -606,7 +818,7 @@ function triggerMotion(groupName) {
 }
 
 // ==========================================
-// 6. Audio Player & Natural Cadence Lip-Sync
+// 7. Audio Player & Natural Cadence Lip-Sync
 // ==========================================
 async function speakText(text) {
   if (!text || !text.trim()) return;
@@ -649,7 +861,7 @@ async function speakText(text) {
     const source = audioContext.createMediaElementSource(currentAudio);
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
-    analyser.smoothingTimeConstant = 0.5; // Natural smooth mouth easing
+    analyser.smoothingTimeConstant = 0.5;
     source.connect(analyser);
     analyser.connect(audioContext.destination);
 
@@ -706,7 +918,7 @@ async function speakText(text) {
 }
 
 // ==========================================
-// 7. Dialogue Box & Typewriter Animation
+// 8. Dialogue Box & Typewriter Animation
 // ==========================================
 let typeTimer = null;
 function showDialogue(text) {
@@ -724,6 +936,8 @@ function showDialogue(text) {
       clearInterval(typeTimer);
     }
   }, 22);
+
+  updateDialoguePosition();
 }
 
 function hideDialogue() {
@@ -731,7 +945,7 @@ function hideDialogue() {
 }
 
 // ==========================================
-// 8. Chat Interaction Loop (Groq LLM)
+// 9. Chat Interaction Loop (Groq LLM)
 // ==========================================
 async function sendMessage(userMsg) {
   const msg = (userMsg || chatInput.value).trim();
@@ -743,10 +957,14 @@ async function sendMessage(userMsg) {
     return;
   }
 
+  // Wake up if sleeping
+  if (lifeEngine && lifeEngine.state === PET_STATES.SLEEP) {
+    lifeEngine.wakeUp();
+  }
+
   chatInput.value = '';
   showDialogue(`Master: "${msg}"`);
 
-  // Enter thinking animation
   if (lifeEngine) lifeEngine.isThinking = true;
 
   conversationHistory.push({ role: 'user', content: msg });
@@ -795,7 +1013,7 @@ async function sendMessage(userMsg) {
 }
 
 // ==========================================
-// 9. Voice Chat (Mic & Whisper STT)
+// 10. Voice Chat (Mic & Whisper STT)
 // ==========================================
 async function toggleVoiceRecording() {
   if (isRecording) {
@@ -877,7 +1095,7 @@ async function processVoiceInput(blob) {
 }
 
 // ==========================================
-// 10. Event Listeners & Settings Modal
+// 11. Event Listeners & Roaming Toggle
 // ==========================================
 btnSend.addEventListener('click', () => sendMessage());
 chatInput.addEventListener('keydown', (e) => {
@@ -896,6 +1114,19 @@ document.querySelectorAll('.exp-btn').forEach(btn => {
 btnToggleDock.addEventListener('click', () => {
   chatDock.classList.toggle('collapsed');
   dockChevron.textContent = chatDock.classList.contains('collapsed') ? '▲' : '▼';
+});
+
+// Roaming Toggle
+btnRoam.addEventListener('click', () => {
+  roamEnabled = !roamEnabled;
+  btnRoam.classList.toggle('active', roamEnabled);
+  if (roamEnabled) {
+    showDialogue("Roam mode ON! I'm exploring your desktop! 🐾");
+    if (lifeEngine) lifeEngine.pickNextState();
+  } else {
+    showDialogue("Sitting still right here with Master! ✨");
+    if (lifeEngine) lifeEngine.state = PET_STATES.IDLE;
+  }
 });
 
 document.getElementById('btn-close').addEventListener('click', () => {

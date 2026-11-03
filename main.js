@@ -52,16 +52,20 @@ async function startPythonServer() {
 }
 
 function createWindow() {
+  const { screen } = require('electron');
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { x, y, width, height } = primaryDisplay.workArea;
+
   mainWindow = new BrowserWindow({
-    width: 480,
-    height: 720,
-    minWidth: 320,
-    minHeight: 480,
+    x: x,
+    y: y,
+    width: width,
+    height: height,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
     hasShadow: false,
-    resizable: true,
+    resizable: false,
     skipTaskbar: false,
     webPreferences: {
       nodeIntegration: true,
@@ -72,11 +76,8 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
 
-  // Position at bottom right of primary display
-  const { screen } = require('electron');
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width, height } = primaryDisplay.workAreaSize;
-  mainWindow.setPosition(width - 500, height - 740);
+  // Enable initial mouse click-through so desktop apps remain fully clickable
+  mainWindow.setIgnoreMouseEvents(true, { forward: true });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
