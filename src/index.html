@@ -14,6 +14,8 @@
       exports = undefined;
     }
   </script>
+  <!-- 3D Three.js & Pixiv VRM Engine -->
+  <script src="lib/three-vrm.bundle.js"></script>
   <!-- Live2D Cubism Core & PixiJS Libraries -->
   <script src="lib/live2dcubismcore.min.js"></script>
   <script src="lib/pixi.min.js"></script>
@@ -36,6 +38,7 @@
         <span class="app-title">DeepSeek-chan</span>
       </div>
       <div class="win-buttons">
+        <button id="btn-mode" title="Toggle 3D VTuber / 2D Live2D" class="win-btn active">🎭 3D</button>
         <button id="btn-roam" title="Toggle Desktop Roaming / Walk Mode" class="win-btn active">🐾</button>
         <button id="btn-pin" title="Toggle Always on Top" class="win-btn active">📌</button>
         <button id="btn-settings" title="Settings" class="win-btn">⚙️</button>
@@ -55,8 +58,8 @@
       <div id="dialogue-text" class="bubble-content"></div>
     </div>
 
-    <!-- Live2D Full-Screen Desktop Canvas Layer -->
-    <canvas id="live2d-canvas"></canvas>
+    <!-- 3D VTuber & 2D Full-Screen Desktop Canvas Layer -->
+    <canvas id="waifu-canvas"></canvas>
 
     <!-- Bottom-Right Floating Chat Dock -->
     <div id="chat-dock">
